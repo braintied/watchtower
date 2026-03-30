@@ -1,0 +1,74 @@
+# Watchtower — Self-Hosted Setup
+#
+# One-command start:
+#   docker compose up
+#
+# This runs:
+#   - Supabase (PostgreSQL + pgvector + PostgREST)
+#   - Watchtower server (Hono + Inngest)
+#   - Inngest dev server (background job processing)
+#
+# After starting, run migrations:
+#   npx supabase db push --db-url postgresql://postgres:postgres@localhost:54322/postgres
+
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector
+  db:
+    image: supabase/postgres:15.6.1.143
+    ports:
+      - "54322:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - watchtower-db:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Supabase REST API (PostgREST)
+  rest:
+    image: postgrest/postgrest:v12.2.8
+    ports:
+      - "54321:3000"
+    environment:
+      PGRST_DB_URI: postgresql://postgres:postgres@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,watchtower
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Inngest dev server
+  inngest:
+    image: inngest/inngest:latest
+    ports:
+      - "8288:8288"
+    command: inngest dev -u http://watchtower:5003/api/inngest
+
+  # Watchtower server
+  watchtower:
+    build: .
+    ports:
+      - "5003:5003"
+    environment:
+      SUPABASE_URL: http://rest:3000
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlN625CKQyJDOmnIl2v2h_eH3eFu2yc}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+      INNGEST_DEV: 1
+      PORT: 5003
+    depends_on:
+      db:
+        condition: service_healthy
+      inngest:
+        condition: service_started
+
+volumes:
+  watchtower-db:

@@ -1,0 +1,35 @@
+{
+  "name": "watchtower",
+  "version": "0.1.0",
+  "description": "Open-source AI coding session intelligence. Auto-captures Claude Code sessions, AI-analyzes them, and makes them searchable.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/braintied/watchtower",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/braintied/watchtower.git"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "install-hooks": "tsx scripts/install-hooks.ts",
+    "uninstall-hooks": "tsx scripts/uninstall-hooks.ts",
+    "backfill": "tsx scripts/backfill-sessions.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@hono/node-server": "^1.13.0",
+    "@supabase/supabase-js": "^2.99.1",
+    "hono": "^4.12.8",
+    "inngest": "^3.30.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
