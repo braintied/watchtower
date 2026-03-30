@@ -25,15 +25,6 @@ const SessionStartSchema = z.object({
 });
 
 // =============================================================================
-// TYPES
-// =============================================================================
-
-interface ProjectLookupRow {
-  id: string;
-  slug: string;
-}
-
-// =============================================================================
 // HANDLER
 // =============================================================================
 
@@ -64,42 +55,24 @@ export async function handleSessionStartWebhook(c: Context): Promise<Response> {
     '[Watchtower/SessionStart] Session started',
   );
 
-  // Resolve project
-  let projectId: string | null = null;
-
-  if (body.project_slug !== undefined) {
-    const { data, error } = await queryWatchtower('projects')
-      .select('id, slug')
-      .eq('slug', body.project_slug)
-      .maybeSingle();
-
-    if (error === null && data !== null) {
-      const projectRow = data as ProjectLookupRow;
-      projectId = projectRow.id;
-    }
-  }
-
-  // Upsert a minimal session row marking it as "active" (started but not ended)
-  const insertPayload: Record<string, unknown> = {
-    session_key: body.session_key,
-    source: 'claude_code',
-    session_started_at: body.started_at,
-    metadata: {
-      status: 'active',
-      directory: body.directory,
-    },
-  };
-
-  if (projectId !== null) {
-    insertPayload.project_id = projectId;
-  }
-
-  // Use upsert — if the Stop hook already created this session, don't overwrite
+  // Upsert a minimal session row marking it as "active"
+  // If the Stop hook already created this session, don't overwrite
   const { error: upsertError } = await queryWatchtower('coding_sessions')
-    .upsert(insertPayload, { onConflict: 'project_id,session_key', ignoreDuplicates: true });
+    .upsert(
+      {
+        session_key: body.session_key,
+        source: 'claude_code',
+        session_started_at: body.started_at,
+        metadata: {
+          status: 'active',
+          directory: body.directory,
+          project_slug: body.project_slug,
+        },
+      },
+      { onConflict: 'session_key', ignoreDuplicates: true },
+    );
 
   if (upsertError !== null) {
-    // Unique constraint violation means session already exists — that's fine
     if (!upsertError.message.includes('duplicate') && !upsertError.message.includes('unique')) {
       logger.warn(
         { error: upsertError.message, sessionKey: body.session_key },

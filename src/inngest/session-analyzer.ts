@@ -26,7 +26,7 @@ import { redactSecrets } from '../lib/redact.js';
 
 interface SessionRow {
   id: string;
-  project_id: string;
+  project_id: string | null;
   session_key: string;
   title: string | null;
   ai_summary: string | null;

@@ -12,6 +12,7 @@ CREATE SCHEMA IF NOT EXISTS watchtower;
 CREATE TABLE watchtower.coding_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_key TEXT NOT NULL UNIQUE,
+  project_id TEXT,
   source TEXT NOT NULL DEFAULT 'claude_code',
   title TEXT,
   ai_summary TEXT,

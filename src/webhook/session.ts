@@ -43,11 +43,6 @@ const SessionWebhookSchema = z.object({
 // TYPES
 // =============================================================================
 
-interface ProjectLookupRow {
-  id: string;
-  slug: string;
-}
-
 interface InsertedSessionRow {
   id: string;
 }
@@ -90,32 +85,7 @@ export async function handleSessionWebhook(c: Context): Promise<Response> {
     '[Watchtower/SessionWebhook] Received session webhook',
   );
 
-  // Resolve project_id from slug if provided
-  let projectId: string | null = null;
-  let projectSlug: string | null = null;
-
-  if (body.project_slug !== undefined) {
-    const { data, error } = await queryWatchtower('projects')
-      .select('id, slug')
-      .eq('slug', body.project_slug)
-      .maybeSingle();
-
-    if (error !== null) {
-      logger.warn(
-        { error: error.message, slug: body.project_slug },
-        '[Watchtower/SessionWebhook] Failed to resolve project slug',
-      );
-    } else if (data !== null) {
-      const projectRow = data as ProjectLookupRow;
-      projectId = projectRow.id;
-      projectSlug = projectRow.slug;
-    } else {
-      logger.warn(
-        { slug: body.project_slug },
-        '[Watchtower/SessionWebhook] Project slug not found',
-      );
-    }
-  }
+  const projectSlug = body.project_slug !== undefined ? body.project_slug : null;
 
   // Compute message_count and derived fields from messages if provided
   let messageCount = body.message_count;
@@ -164,9 +134,6 @@ export async function handleSessionWebhook(c: Context): Promise<Response> {
     source: body.source,
   };
 
-  if (projectId !== null) {
-    insertPayload.project_id = projectId;
-  }
   if (messageCount !== undefined) {
     insertPayload.message_count = messageCount;
   }
@@ -245,7 +212,6 @@ export async function handleSessionWebhook(c: Context): Promise<Response> {
     name: 'watchtower/coding-session.received',
     data: {
       session_id: insertedData.id,
-      project_id: projectId,
       project_slug: projectSlug,
     },
   });

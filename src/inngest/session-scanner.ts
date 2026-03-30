@@ -76,12 +76,6 @@ interface ParsedMessage {
   toolCalls: ToolCall[];
 }
 
-interface ProjectRow {
-  id: string;
-  slug: string;
-  github_repo: string | null;
-}
-
 // =============================================================================
 // JSONL PARSING
 // =============================================================================
@@ -406,37 +400,7 @@ export function createSessionScanner(client: Inngest) {
         return { status: 'complete', sessions_found: 0, sessions_ingested: 0, sessions_skipped: 0 };
       }
 
-      // Step 2: Resolve project mappings
-      // Return a plain object (not Map) since Inngest step.run serializes return values
-      const projectMap = await step.run('resolve-projects', async () => {
-        const { data, error } = await queryWatchtower('projects')
-          .select('id, slug, github_repo');
-
-        if (error !== null) {
-          throw new Error(`Failed to fetch projects: ${error.message}`);
-        }
-
-        if (data === null) {
-          return {} as Record<string, { id: string; slug: string }>;
-        }
-
-        const projects = data as ProjectRow[];
-        const mapping: Record<string, { id: string; slug: string }> = {};
-
-        for (const project of projects) {
-          if (project.github_repo !== null) {
-            const parts = project.github_repo.split('/');
-            if (parts.length === 2) {
-              mapping[parts[1]] = { id: project.id, slug: project.slug };
-            }
-          }
-          mapping[project.slug] = { id: project.id, slug: project.slug };
-        }
-
-        return mapping;
-      });
-
-      // Step 3: Check for already-ingested sessions
+      // Step 2: Check for already-ingested sessions
       const existingKeysArr = await step.run('check-existing', async () => {
         const allKeys = sessionDirs.map((s) => s.sessionKey);
         const existing: string[] = [];
@@ -551,22 +515,9 @@ export function createSessionScanner(client: Inngest) {
           }
           const toolsUsed = Array.from(toolsUsedSet);
 
-          // Resolve project
+          // Derive project name from directory path
           const projectDirPath = dirNameToPath(session.projectDirName);
-          let projectId: string | null = null;
-          let projectSlug: string | null = null;
-
-          // Try to match by checking if any project repo name appears in the path
-          for (const key of Object.keys(projectMap)) {
-            if (projectDirPath.toLowerCase().includes(key.toLowerCase())) {
-              const match = projectMap[key];
-              if (match !== null && match !== undefined) {
-                projectId = match.id;
-                projectSlug = match.slug;
-              }
-              break;
-            }
-          }
+          const projectSlug = projectDirPath.split('/').pop();
 
           // Build raw_content for AI analysis (truncated to 50KB)
           // Includes message text + tool call summaries for rich context
@@ -625,9 +576,6 @@ export function createSessionScanner(client: Inngest) {
             },
           };
 
-          if (projectId !== null) {
-            insertPayload.project_id = projectId;
-          }
           if (sessionStartedAt !== null) {
             insertPayload.session_started_at = sessionStartedAt;
           }
@@ -659,7 +607,6 @@ export function createSessionScanner(client: Inngest) {
             name: 'watchtower/coding-session.received',
             data: {
               session_id: insertedData.id,
-              project_id: projectId,
               project_slug: projectSlug,
             },
           });
