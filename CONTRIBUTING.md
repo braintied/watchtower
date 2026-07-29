@@ -1,27 +1,29 @@
-# Contributing to Watchtower
+# Contributing
 
-## Development
+## Where to send changes
+
+| Change type | Where |
+|-------------|--------|
+| Session adapters (Codex, Grok, Cursor, …) | `braintied/stack` → `packages/watchtower` |
+| Claude Code hooks (canonical) | `braintied/stack` → `packages/watchtower/hooks` |
+| Runner brains / claude-providers bridge | `braintied/stack` → `packages/watchtower/scripts/brain.sh` |
+| Project monitor pure logic | `braintied/stack` → `packages/watchtower/src/monitor` |
+| Fly service, Inngest, webhooks | `braintied/ora-ai` → `apps/watchtower` |
+| Public docs / OSS install story | this repo |
+
+Do **not** add a parallel adapter or hook here that is not upstreamed to the stack package first. Drift is how we lost Codex sessions for months.
+
+## Syncing the OSS snapshot
+
+Hooks in this repo may lag the stack package. When releasing a public snapshot:
+
+1. Copy open-safe hook scripts from `@braintied/watchtower` hooks (no fleet secrets).
+2. Update the version note in README.
+3. Do not vendor proprietary monitor or brain logic into this Apache tree.
+
+## Local OSS development
 
 ```bash
 npm install
-npm run dev        # Start dev server with hot reload
-npm run typecheck  # Type check
-npm run build      # Production build
+npm test   # if present
 ```
-
-## Adding Support for a New Tool
-
-1. Create a new hook script in `hooks/` that extracts session data from the tool's log format
-2. Update `scripts/install-hooks.ts` to register the new hook
-3. Add a converter in the [AgentLog](https://github.com/braintied/agentlog) repo
-
-## Reporting Issues
-
-Open an issue on GitHub with:
-- What you expected
-- What happened
-- Your environment (OS, Node version, tool version)
-
-## License
-
-By contributing, you agree that your contributions will be licensed under Apache-2.0.
