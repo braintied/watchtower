@@ -8,7 +8,7 @@ The full, maintained product lives in the Braintied stack monorepo:
 
 | Package | What it owns |
 |---------|----------------|
-| **`@braintied/watchtower`** | Multi-agent session capture (Claude, Codex, Cursor, Grok, …), hooks, runner brains, project-monitoring pure logic |
+| **`@braintied/watchtower`** | Multi-agent session capture, hooks, runner brains, project-monitoring pure logic, **agentic manager** (`status`/`plan`/`manage install`) |
 | **ora-ai `apps/watchtower`** | Fly service (`ora-watchtower.fly.dev`) — webhooks, Inngest, Cortex |
 
 ```bash
