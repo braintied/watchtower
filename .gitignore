@@ -5,3 +5,7 @@ dist/
 *.tgz
 .env
 .env.local
+
+# Harness standard: the repo CLAUDE.md router ships with clones —
+# negate any machine-global ignore.
+!CLAUDE.md
