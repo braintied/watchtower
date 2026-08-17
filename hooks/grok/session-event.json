@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude/hooks/session-event.sh",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude/hooks/session-event.sh",
+            "timeout": 8
+          }
+        ]
+      }
+    ]
+  }
+}
