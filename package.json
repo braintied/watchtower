@@ -1,7 +1,7 @@
 {
-  "name": "watchtower",
+  "name": "@braintied/watchtower-capture",
   "version": "5.0.1",
-  "description": "Capture coding sessions from Claude, Grok, Codex, Cursor, and OpenCode. Apache client, version-locked to @braintied/watchtower.",
+  "description": "Apache capture client for Watchtower. Your host, your database. Not Braintied Fly or Cortex.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://github.com/braintied/watchtower",
@@ -31,5 +31,9 @@
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://npm.pkg.github.com"
   }
 }
