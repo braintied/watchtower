@@ -4,7 +4,9 @@ This tree is a generated Apache snapshot of the capture client in
 `@braintied/watchtower 5.0.1`.
 `packages/watchtower/scripts/sync-oss.mjs` writes the allowlisted
 capture files, `README.md`, and this file. Version numbers stay
-locked to the stack package. `stack.mjs publish` runs the sync.
+locked to the stack package. `node scripts/stack.mjs snapshot`
+refreshes this repo without an npm publish. `publish` runs the same
+sync after a new version and when the version is already on the registry.
 
 A competent agent with only this file and a terminal edits the
 *right* tree. A careless one is stopped before it adds an adapter
@@ -73,7 +75,8 @@ sync. The fleet file still names `https://ora-watchtower.fly.dev`.
 
 1. Edit `braintied/stack` → `packages/watchtower`.
 2. `pnpm run verify` in that package (typecheck + test + build).
-3. `node packages/watchtower/scripts/sync-oss.mjs --apply`.
+3. `node scripts/stack.mjs snapshot --only @braintied/watchtower`
+   (or `node packages/watchtower/scripts/sync-oss.mjs --apply --push`).
 4. Do not add adapters, hooks, or session-key logic here first.
 
 Webhook-only Stop hook source is

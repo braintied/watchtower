@@ -6,9 +6,10 @@ came back, so the next session does not repeat the same approach.
 
 This repository is the Apache capture client. It is version-locked to
 [`@braintied/watchtower`](https://github.com/braintied/stack/tree/main/packages/watchtower)
-**5.0.1**. `stack.mjs publish` runs
-`packages/watchtower/scripts/sync-oss.mjs`, which overwrites the capture
-files, this README, and [AGENTS.md](./AGENTS.md).
+**5.0.1**. Edit `packages/watchtower/oss/` in `braintied/stack`.
+`node scripts/stack.mjs snapshot` refreshes this repo without an npm
+publish. `publish` does the same after a new version, and also when
+this version is already on the registry.
 
 | Name | What it is |
 |------|------------|
