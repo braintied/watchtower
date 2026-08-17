@@ -1,28 +1,21 @@
-# watchtower Ops Runbook
+# Watchtower capture client
 
-> **Status:** Last verified 2026-08-12. Operating the live system.
-> Architecture: [architecture.md](./architecture.md)
+**Created:** 2026-08-17 (PT)
+**Updated:** 2026-08-17 (PT)
+**Version:** 1
 
-<!-- Suggested skeleton:
+```bash
+npm install
+npm run install-hooks
+WATCHTOWER_SESSION_WEBHOOK_URL=https://your-host/webhooks/session
+npm start
+```
 
-## Deploys (state the trigger truthfully — manual? auto?)
-| Target | Command | Notes |
+Claude Code Stop posts to `http://localhost:5003/webhooks/session`
+unless that env var is set.
 
-## Environment registry
-| Var | Local | Prod | Status |
-Every var also documented inline in .env.example.
+The hosted indexer is a Fly app named `ora-watchtower`. Do not deploy
+it from this checkout. The product is Watchtower. The fleet package is
+`@braintied/watchtower`.
 
-## Crons & background work
-
-## Routine operations
-Pairing, re-seeding, opt-ins — the things someone does monthly.
-
-## Debugging
-Where a stuck job shows up first; the 3 log surfaces; degradation signals.
-
-## The end-to-end smoke test
-The one scripted walk that proves the whole system.
-
-## Open setup gates
-What only a human with credentials can do, listed so it never gets lost.
--->
+Architecture: [architecture.md](./architecture.md).
