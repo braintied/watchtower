@@ -2,9 +2,11 @@ node_modules/
 dist/
 .npmrc
 .sisyphus/
+.omc/
 *.tgz
 .env
 .env.local
+!.env.example
 
 # Harness standard: the repo CLAUDE.md router ships with clones —
 # negate any machine-global ignore.

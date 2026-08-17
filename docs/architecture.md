@@ -7,7 +7,7 @@
 **What this is:** How the public Apache snapshot is wired
 
 The full contract (adapters, session keys, slug ladder, webhook
-payload, leftover 2026-03 enum, env, traps) lives in
+payload, env, traps) lives in
 [README.md](../README.md) and [AGENTS.md](../AGENTS.md). This page
 is the topology only.
 
@@ -19,5 +19,6 @@ is the topology only.
 | Runner pool | a Mac, launchd | Yes |
 
 Synced from `braintied/stack` `packages/watchtower/oss/` by
-`scripts/sync-oss.mjs`. The leftover Hono server in `src/index.ts`
-is not overwritten and still rejects `source=grok`.
+`scripts/sync-oss.mjs`. The self-host server in `src/index.ts` is
+not overwritten by sync. Its webhook `source` enum matches
+`CODING_SESSION_SOURCES` in `src/types.ts`.

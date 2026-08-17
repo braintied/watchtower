@@ -13,6 +13,7 @@ import { queryWatchtower } from '../lib/db.js';
 import { inngest } from '../inngest/client.js';
 import { logger } from '../lib/logger.js';
 import { redactSecrets } from '../lib/redact.js';
+import { CODING_SESSION_SOURCES } from '../types.js';
 
 // =============================================================================
 // SCHEMA
@@ -27,7 +28,7 @@ const SessionWebhookMessageSchema = z.object({
 
 const SessionWebhookSchema = z.object({
   session_key: z.string(),
-  source: z.enum(['claude_code', 'cursor', 'codex', 'gemini']).default('claude_code'),
+  source: z.enum(CODING_SESSION_SOURCES).default('claude_code'),
   project_slug: z.string().optional(),
   messages: z.array(SessionWebhookMessageSchema).optional(),
   files_touched: z.array(z.string()).optional(),

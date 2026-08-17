@@ -85,13 +85,11 @@ Copy the commands. Check the verify after each step.
    Verify: `rg session-ingest ~/.claude/settings.json`
    and `test -x ~/.claude/hooks/session-ingest.sh`
 
-5. **Widen the leftover webhook enum if they use Grok**
+5. **Grok / Codex / Cursor / OpenCode**
 
-   `src/webhook/session.ts` accepts `claude_code | cursor | codex | gemini`.
-   `src/types.ts` `CODING_SESSION_SOURCES` also has `opencode`, `grok`,
-   `kulti_meet`. A Grok POST to `npm start` returns 400 until the
-   Zod enum matches. Do that in this tree (leftover server is not
-   overwritten by sync).
+   `src/webhook/session.ts` `source` is `CODING_SESSION_SOURCES`.
+   A Grok POST to `npm start` is valid. Adapters live in
+   `src/session-adapters.ts`.
 
 6. **Prove a row**
 
@@ -149,7 +147,7 @@ Leftover 2026-03 self-host server, **not** overwritten by sync:
 | Path | Note |
 |------|------|
 | `src/index.ts` | Hono on `:5003` |
-| `src/webhook/session.ts` | Zod enum missing grok until you widen it |
+| `src/webhook/session.ts` | `source` is `CODING_SESSION_SOURCES` |
 | `src/lib/db.ts` | throws without `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` |
 | `hooks/session-track.sh` | SessionStart. Still `encoded-cwd/session-id` |
 | `scripts/install-hooks.ts` | copies ingest + track, patches settings.json |
@@ -217,7 +215,7 @@ the stack package**, then sync.
 | Inherit `GIT_DIR` | sessions attributed to the hook's repo | keep the scrub |
 | Event whitelist on session-key | Grok user turns land on `claude:` | walk every event |
 | Copy `session-track.sh` key rule | `encoded-cwd/id` vs `source:uuid` | `session-key.sh` is the writer |
-| Self-host Grok against `npm start` | HTTP 400, Zod enum | widen `src/webhook/session.ts` |
+| Self-host Grok against `npm start` | 400 on `source` | `z.enum(CODING_SESSION_SOURCES)` must stay |
 | Default `cwd_is_repo` to false | attribution gap shrinks on paper | omit ≠ false |
 | `readFileSync` a Codex rollout | silent drop of the largest sessions | stream |
 | Deploy Fly from here | `fly deploy` in this checkout | their app, or stop |

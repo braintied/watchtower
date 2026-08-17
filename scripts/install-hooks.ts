@@ -12,9 +12,9 @@
  *   3. Adds WATCHTOWER_SESSION_WEBHOOK_URL to your shell profile
  *
  * Usage:
- *   npx tsx scripts/watchtower/install-hooks.ts
- *   npx tsx scripts/watchtower/install-hooks.ts --url https://custom-watchtower.example.com
- *   npx tsx scripts/watchtower/install-hooks.ts --dry-run
+ *   npx tsx scripts/install-hooks.ts
+ *   npx tsx scripts/install-hooks.ts --url https://your-host/webhooks/session
+ *   npx tsx scripts/install-hooks.ts --dry-run
  */
 
 import { readFile, writeFile, copyFile, mkdir, chmod } from 'node:fs/promises';
@@ -271,16 +271,16 @@ async function main(): Promise<void> {
   console.log('');
   console.log('What happens now:');
   console.log('  - Every Claude Code session start is tracked');
-  console.log('  - Every Claude Code session end is auto-ingested');
-  console.log('  - Sessions are AI-analyzed (title, summary, decisions)');
-  console.log('  - Ora agents can search your coding history');
+  console.log('  - Every Claude Code session end posts to YOUR webhook');
+  console.log('  - Default: http://localhost:5003/webhooks/session');
+  console.log('  - Braintied Fly is refused. This is your host.');
   console.log('');
   console.log('To activate, either:');
   console.log('  1. Open a new terminal, or');
   console.log('  2. Run: source ~/.zshrc');
   console.log('');
   console.log('To uninstall:');
-  console.log('  npx tsx scripts/watchtower/uninstall-hooks.ts');
+  console.log('  npm run uninstall-hooks');
 }
 
 main().catch((err) => {

@@ -215,10 +215,9 @@ your host), not ours.
 
 ### 6. Grok, Codex, Cursor, OpenCode
 
-The leftover server in `src/webhook/session.ts` accepts only
-`claude_code | cursor | codex | gemini`. A Grok POST returns 400
-until you widen that enum to match `CODING_SESSION_SOURCES` in
-`src/types.ts` (`claude_code | cursor | codex | gemini | opencode | grok | kulti_meet`).
+The self-host webhook accepts every id in `CODING_SESSION_SOURCES`
+(`claude_code`, `cursor`, `codex`, `gemini`, `opencode`, `grok`,
+`kulti_meet`).
 
 Disk paths the adapters already know:
 

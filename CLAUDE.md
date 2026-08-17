@@ -17,8 +17,5 @@ how it is wired: [docs/architecture.md](./docs/architecture.md).
 ## Verify
 
 ```bash
-npm run typecheck
+npm run verify
 ```
-
-The typecheck still covers the leftover 2026-03 Hono/Inngest server.
-That gate is pre-existing.

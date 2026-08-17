@@ -11,8 +11,8 @@
  *   3. Removes WATCHTOWER env vars from shell profile
  *
  * Usage:
- *   npx tsx scripts/watchtower/uninstall-hooks.ts
- *   npx tsx scripts/watchtower/uninstall-hooks.ts --dry-run
+ *   npm run uninstall-hooks
+ *   npx tsx scripts/uninstall-hooks.ts --dry-run
  */
 
 import { readFile, writeFile, unlink } from 'node:fs/promises';

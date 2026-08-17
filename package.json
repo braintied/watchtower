@@ -14,9 +14,9 @@
     "build": "tsup",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "verify": "tsc --noEmit",
     "install-hooks": "tsx scripts/install-hooks.ts",
-    "uninstall-hooks": "tsx scripts/uninstall-hooks.ts",
-    "backfill": "tsx scripts/backfill-sessions.ts"
+    "uninstall-hooks": "tsx scripts/uninstall-hooks.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
