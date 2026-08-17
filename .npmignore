@@ -1,0 +1,9 @@
+.omc
+.github
+node_modules
+qa
+docs/plans
+docs/changelog/TEMPLATE.md
+*.map
+.env
+.env.*
