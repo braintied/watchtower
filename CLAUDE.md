@@ -13,6 +13,9 @@ Agents: [AGENTS.md](./AGENTS.md). Wiring:
   is Watchtower. The public package is
   `@braintied/watchtower-capture`.
 - Do not deploy using the Fly app name `ora-watchtower`.
+- Do not require a model API key for capture. Leave
+  `ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` empty unless they asked
+  for the leftover analyzer.
 
 ## Verify
 

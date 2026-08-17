@@ -6,18 +6,24 @@ improvise a connection to Braintied machines.
 
 This tree is a generated Apache-2.0 snapshot of the capture client
 in `@braintied/watchtower-capture 5.0.1`. Humans read
-[README.md](./README.md) for the same setup.
+[README.md](./README.md) for the same setup, with a longer
+explanation of every named service.
+
+Watchtower does not call a model and does not select one. Capture
+works with `ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` empty.
 
 ## What you are building
 
 A working capture loop:
 
 ```
-their agent  -->  hook on their Mac  -->  THEIR server :5003  -->  THEIR Postgres
+their agent  -->  hook or disk adapter on their machine  -->  THEIR server :5003  -->  THEIR Postgres
 ```
 
 Done is not "the repo clones." Done is a row in **their**
-`watchtower.coding_sessions` after they stop a Claude Code session.
+`watchtower.coding_sessions` after they stop a session in any
+captured tool. Claude Code Stop is the least wiring. It is not a
+requirement, and it does not lock them to Anthropic.
 
 ## What you are not connecting
 
@@ -33,8 +39,31 @@ set `WATCHTOWER_SESSION_WEBHOOK_URL` to our host "so the demo
 works." Do not put our project URL in `.env.example` or compose.
 
 If they want us to host it: [hello@braintied.com](mailto:hello@braintied.com),
-**their** Fly, **their** database. Point them at
+**their** host, **their** database. Point them at
 [consulting](https://www.braintied.com/consulting). Then stop.
+
+## Terms you must be able to explain
+
+The human may not know these names. Do not skip the sentence.
+
+| Name | What it is here | Do they need an account? |
+|------|-----------------|--------------------------|
+| Coding agent | The program that edits their repo (Claude Code, Cursor, Codex, Grok CLI, OpenCode, Gemini CLI, …) | n/a |
+| Hook | A shell script their tool runs on Stop / SessionStart | no |
+| Webhook | `http://localhost:5003/webhooks/session`, an HTTP URL **their** server listens on | no |
+| [Postgres](https://www.postgresql.org/) | The database. Schema `watchtower`. Tables in `migrations/001_init.sql` | no (compose runs it) |
+| [PostgREST](https://docs.postgrest.org/en/latest/) | HTTP in front of those tables. Host `http://127.0.0.1:54321`, compose `http://rest:3000` | no |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | Env names from `@supabase/supabase-js`. Values are **their** PostgREST, or a [Supabase project they created](https://supabase.com/docs/guides/getting-started) | no, unless they choose hosted Supabase |
+| [Supabase](https://supabase.com/docs/guides/getting-started) | A hosted Postgres + PostgREST product. Optional. Compose does not use supabase.com | only if they pick that host |
+| [Inngest](https://www.inngest.com/docs) | Background jobs. Local UI on port 8288. Leftover analyzer only | no cloud account for localhost |
+| [Docker Compose](https://docs.docker.com/get-started/get-docker/) | One command that starts Postgres, PostgREST, local Inngest, and the server | Docker Desktop / Engine |
+| [Hono](https://hono.dev/) | The HTTP framework in `src/index.ts` | no |
+| [Fly.io](https://fly.io/docs/launch/deploy/) | One company that will rent them a public URL. Not required. Not our app | only if they pick Fly |
+| [Render](https://render.com/docs/deploys) | Same job as Fly, different vendor | only if they pick Render |
+| `ora-watchtower.fly.dev` | Braintied's hosted indexer. Refuse it | never |
+
+Capture does not call a model. The leftover analyzer currently talks
+to Anthropic and Voyage **if** those keys are set. Leave them empty.
 
 ## Execute this setup
 
@@ -57,12 +86,15 @@ Verify: `test -f hooks/session-ingest.sh && test -f src/index.ts`
 
 ### 2. Write `.env.local` with their values
 
-Required for the server: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`.
-`src/lib/db.ts` throws if either is missing. Use compose
-(`http://rest:3000` in the container, `http://127.0.0.1:54321` on
-the host) or a [Supabase project they created](https://supabase.com/docs/guides/getting-started).
+Required for the leftover server: `SUPABASE_URL`,
+`SUPABASE_SERVICE_KEY`. `src/lib/db.ts` throws if either is missing.
+Use compose (`http://rest:3000` in the container,
+`http://127.0.0.1:54321` on the host) or a PostgREST / Supabase
+project **they** created.
 
 Webhook defaults are localhost. Leave them. Never our Fly host.
+Leave `ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` empty unless they
+asked to turn the leftover analyzer on.
 
 Verify: `rg -n 'ora-watchtower\.fly\.dev' .env.local` prints
 nothing.
@@ -79,9 +111,14 @@ use compose. Expect `{"status":"ok","service":"watchtower"}`.
 Connection refused: compose is not up. A body from a `*.fly.dev`
 host: you pointed at us. Stop and fix the URL.
 
-### 4. Install hooks on the machine that runs Claude Code
+Optional: `http://127.0.0.1:8288` is the local Inngest UI. They do
+not need to open it for capture to work.
 
-[Hook events](https://code.claude.com/docs/en/hooks).
+### 4. Install hooks if they use Claude Code
+
+[Hook events](https://code.claude.com/docs/en/hooks). This is the
+easiest prove path. Skip this step if they only use disk-adapter
+tools, and POST from `src/session-adapters.ts` instead.
 
 ```bash
 npx tsx scripts/install-hooks.ts --dry-run
@@ -92,10 +129,11 @@ source ~/.zshrc
 Verify: `rg session-ingest ~/.claude/settings.json`
 and `test -x ~/.claude/hooks/session-ingest.sh`
 
-### 5. Grok / Codex / Cursor / OpenCode
+### 5. Other tools
 
 `src/webhook/session.ts` `source` is `CODING_SESSION_SOURCES`.
-A Grok POST to `npm start` is valid. Adapters live in
+A POST with `source=grok` (or `codex`, `cursor`, `opencode`,
+`gemini`) to `npm start` is valid. Adapters live in
 `src/session-adapters.ts`. Disk paths:
 
 | Tool | Path |
@@ -103,11 +141,11 @@ A Grok POST to `npm start` is valid. Adapters live in
 | Codex | `~/.codex/sessions/**/rollout-*.jsonl` |
 | Cursor | `~/.cursor/projects/` |
 | OpenCode | `~/.local/share/opencode/opencode.db` |
-| Grok | `~/.grok/sessions/` |
+| Grok CLI | `~/.grok/sessions/` |
 
 ### 6. Prove a row
 
-Stop a real Claude Code session, then:
+Stop a real session in any captured tool, then:
 
 ```bash
 psql -h localhost -p 54322 -U postgres -d postgres \
@@ -126,6 +164,7 @@ If they need a public webhook, create **their**
 [Render](https://render.com/docs/deploys) / VM.
 Set `WATCHTOWER_SESSION_WEBHOOK_URL` to that URL. Do not run
 `fly deploy` against `ora-watchtower`. Do not reuse our app name.
+They do not need Fly if localhost is enough.
 
 ## Files
 
@@ -141,12 +180,12 @@ Set `WATCHTOWER_SESSION_WEBHOOK_URL` to that URL. Do not run
 | `hooks/lib/session-key.test.sh` | must-fire / must-not-fire for the walker |
 | `hooks/lib/project-slug.sh` | shell half of the resolver, cache, `cwd_is_repo` |
 | `hooks/lib/refuse-hosted.sh` | refuse `ora-watchtower.fly.dev` / `.internal` |
-| `hooks/grok/session-event.json` | Grok PostToolUse wiring |
+| `hooks/grok/session-event.json` | Grok CLI PostToolUse fragment |
 | `hooks/session-ingest.sh` | OSS Stop hook, webhook only |
 | `hooks/session-track.sh` | SessionStart. Still `encoded-cwd/session-id` |
 | `scripts/install-hooks.ts` | copies ingest + track, patches `settings.json` |
 | `migrations/001_init.sql` | `coding_sessions` + `session_chunks` only |
-| `docker-compose.yml` | local Postgres / PostgREST / Inngest stub |
+| `docker-compose.yml` | local Postgres / PostgREST / Inngest |
 
 ## Contracts
 
@@ -160,8 +199,8 @@ Walk every event. Do not put the event name back on a whitelist.
 ### source
 
 `CODING_SESSION_SOURCES` in `src/types.ts`. Keep
-`src/webhook/session.ts` on that same list. A Grok POST against a
-narrower enum returns 400.
+`src/webhook/session.ts` on that same list. A POST whose `source`
+is missing from a narrower enum returns 400.
 
 ### project_slug
 
@@ -183,17 +222,26 @@ stores an empty transcript.
 `parse` must stream. Add sources in `src/session-adapters.ts` and
 open a pull request on this repository.
 
+### Models
+
+Do not add an Anthropic, OpenAI, xAI, or Gemini key as a setup
+requirement. Capture does not call a model. Do not pin a model version
+in docs or compose. The leftover analyzer is opt-in.
+
 ## Traps
 
 | Trap | Tell | Response |
 |------|------|----------|
 | Point the hook at our Fly | `WATCHTOWER_SESSION_WEBHOOK_URL` contains `ora-watchtower` | `refuse-hosted.sh` stays; set localhost or their host |
+| Treat `SUPABASE_` as "they must sign up" | you opened supabase.com before compose | compose PostgREST is enough |
+| Require a model key for capture | setup blocked on `ANTHROPIC_API_KEY` | leave it empty |
+| Pin a model version in their docs | "requires vendor X version Y" | delete the pin |
 | Share a Braintied database as a default | their data in our project | compose or a project they created |
 | Empty `coding_sessions` called success | "setup done" with zero rows | prove a row |
 | Inherit `GIT_DIR` | sessions attributed to the hook's repo | keep the scrub |
-| Event whitelist on session-key | Grok user turns land on `claude:` | walk every event |
+| Event whitelist on session-key | another vendor's turns land on `claude:` | walk every event |
 | Copy `session-track.sh` key rule | `encoded-cwd/id` vs `source:uuid` | `session-key.sh` is the writer |
-| Self-host Grok against a narrow enum | 400 on `source` | `z.enum(CODING_SESSION_SOURCES)` must stay |
+| Narrow `source` enum | 400 on a listed vendor | `z.enum(CODING_SESSION_SOURCES)` must stay |
 | Default `cwd_is_repo` to false | attribution gap shrinks on paper | omit ≠ false |
 | `readFileSync` a Codex rollout | silent drop of the largest sessions | stream |
 | Deploy Fly from here against our app | `fly deploy` / app name `ora-watchtower` | their app, or stop |
@@ -232,6 +280,7 @@ must start succeeding: that is a failed change, not a cleanup.
 - Do not put Braintied credentials in `.env.example`, compose, or docs.
 - Do not call an empty `coding_sessions` table a successful setup.
 - Do not add a bypass to `hooks/lib/refuse-hosted.sh`.
+- Do not require a model API key for capture.
 - Do not force-push `main`.
 
 ## Escalation
