@@ -21,17 +21,9 @@ fi
 HOOK_LIB="$(cd "$(dirname "$0")" && pwd)/lib"
 # shellcheck source=lib/session-key.sh
 . "$HOOK_LIB/session-key.sh"
-# shellcheck source=lib/refuse-hosted.sh
-. "$HOOK_LIB/refuse-hosted.sh"
 watchtower_resolve_session_key || true
 
 WEBHOOK_URL="${WATCHTOWER_SESSION_WEBHOOK_URL:-http://localhost:5003/webhooks/session}"
-if watchtower_is_braintied_production "$WEBHOOK_URL"; then
-  echo "watchtower: refusing to POST to Braintied production ($WEBHOOK_URL)." >&2
-  echo "watchtower: this client is code you run. Point WATCHTOWER_SESSION_WEBHOOK_URL at a host you control." >&2
-  echo '{"continue": true}'
-  exit 0
-fi
 PROJECT_SLUG=$(basename "$DIRECTORY")
 if [ -x "$HOOK_LIB/project-slug.sh" ]; then
   RESOLVED=$("$HOOK_LIB/project-slug.sh" "$DIRECTORY" 2>/dev/null || true)

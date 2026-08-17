@@ -6,56 +6,19 @@ came back, so the next session does not repeat the same approach.
 
 This repository is the Apache capture client. It is version-locked to
 [`@braintied/watchtower`](https://github.com/braintied/stack/tree/main/packages/watchtower)
-**5.0.1**. `stack.mjs publish` runs
-`packages/watchtower/scripts/sync-oss.mjs`, which overwrites the capture
-files, this README, and [AGENTS.md](./AGENTS.md).
+**5.0.1**. Edit `packages/watchtower/oss/` in `braintied/stack`.
+`node scripts/stack.mjs snapshot` refreshes this repo without an npm
+publish. `publish` does the same after a new version, and also when
+this version is already on the registry.
 
 | Name | What it is |
 |------|------------|
-| Watchtower | What we built for ourselves, and the name of this code |
-| `@braintied/watchtower-capture` | This repository, published on GitHub Packages. Apache. Your install. |
-| `@braintied/watchtower` | Braintied's private fleet package (floor, board, manage, recall). Not this repo. Not published for you. |
-| `github.com/braintied/watchtower` | The public tree. Releases live here. |
-| `ora-watchtower.fly.dev` | Braintied's Fly indexer. Ours. The hook will refuse to POST here. |
+| Watchtower | The product |
+| `@braintied/watchtower` | Installable fleet package on [GitHub Packages](https://github.com/orgs/braintied/packages/npm/package/watchtower) |
+| `github.com/braintied/watchtower` | This tree. Hooks, adapters, session keys, a self-host server |
+| `ora-watchtower` | Fly hostname of the hosted indexer at `ora-watchtower.fly.dev`. Leftover from when the service lived in the Ora platform. Not the product name |
 
-## This is code. It is not our machines.
-
-Cloning this repository does not give you Braintied's indexer, Fly
-app, or database. You do not get a login. You do not share our
-Supabase. Sessions you capture stay on a host you run, writing to
-a database you provision.
-
-[braintied.com/watchtower](https://www.braintied.com/watchtower) is
-a public feed of *our* coding sessions. It is not an inbox. Pointing
-`WATCHTOWER_SESSION_WEBHOOK_URL` at `ora-watchtower.fly.dev` (or at
-any `ora-watchtower.internal` address) is refused by
-`hooks/lib/refuse-hosted.sh`. The Stop hook still exits 0 so it
-never blocks Claude Code. It just does not send us your transcript.
-
-Default webhook is `http://localhost:5003/webhooks/session`. That is
-a process on your laptop, started with `npm start` or
-`docker compose up`.
-
-| You run | We run (not included) |
-|---------|------------------------|
-| This capture client | `ora-watchtower` on Fly |
-| Your webhook host | Cortex / our Supabase |
-| Your Postgres (compose stub or your own) | `watchtower.*` on our project |
-| Your Anthropic / Voyage keys, if you analyse | Our keys, our ledger |
-
-The leftover 2026-03 server in `src/index.ts` talks to whatever
-`SUPABASE_URL` you set. Leave it unset or point it at a project you
-created. Do not paste a Braintied credential into it.
-
-## If you want Braintied to build you one
-
-We will stand up Watchtower for a company: your Fly (or equivalent),
-your database, your session store, wired to your agents. That is
-custom work, billed as [consulting](https://www.braintied.com/consulting)
-or an embed. You still do not land on our machines.
-
-Email [hello@braintied.com](mailto:hello@braintied.com). Say you want
-Watchtower hosted for your team.
+Site: [braintied.com/watchtower](https://www.braintied.com/watchtower).
 
 ## What gets captured
 
@@ -223,27 +186,11 @@ visible).
 
 ## Self-host
 
-This is the path for anyone who is not Braintied. You bring the
-compute and the database.
-
 ```bash
 npm start          # src/index.ts, port 5003 (or $PORT)
 npm run dev        # tsx watch
 docker compose up  # Postgres 54322, PostgREST 54321, Inngest 8288, app 5003
 ```
-
-Compose starts a *local* Postgres. It is not Braintied's Supabase.
-After it is up:
-
-```bash
-npx supabase db push --db-url postgresql://postgres:postgres@localhost:54322/postgres
-```
-
-Schema is `migrations/001_init.sql` (`watchtower.coding_sessions`,
-`watchtower.session_chunks`, pgvector). Set `SUPABASE_URL` and the
-service key to *that* stack, or to a Supabase project you created.
-The compose file's placeholder JWT is a local stub. Do not replace
-it with a Braintied credential.
 
 Routes on the leftover 2026-03 server:
 
@@ -254,30 +201,22 @@ Routes on the leftover 2026-03 server:
 | POST | `/webhooks/session-start` | start tracker |
 | GET/POST/PUT | `/api/inngest` | Inngest sync |
 
-This server is a 2026-03 Hono + Inngest snapshot. Floor, board,
-manage, recall, journeys, and error fingerprints are not in it. To
-get those running for your company, you either build on this
-framework or hire us (above). You still do not share our Fly app.
+After compose: `npx supabase db push` against
+`postgresql://postgres:postgres@localhost:54322/postgres`. Schema is
+`migrations/001_init.sql` (`watchtower.coding_sessions`,
+`watchtower.session_chunks`, pgvector). Do not put a live credential
+in compose or in this README. The file in the tree is a local
+development stub.
 
-## Install the capture package
+This server is the 2026-03 Hono + Inngest snapshot. Floor, board,
+manage, recall, journeys, and error fingerprints are not in it.
+Braintied runs the hosted indexer (`ora-watchtower.fly.dev`) from
+`ora-ai/platform/apps/watchtower`.
 
-Releases: [github.com/braintied/watchtower/releases](https://github.com/braintied/watchtower/releases).
+## Fleet package
 
-```bash
-# GitHub Packages (public capture client)
-npm install @braintied/watchtower-capture --registry=https://npm.pkg.github.com
-
-# or this tree
-git clone https://github.com/braintied/watchtower.git
-```
-
-`@braintied/watchtower` (no `-capture`) is Braintied's private fleet
-package. `pnpm add @braintied/watchtower` on a machine that is not
-ours will not give you our indexer.
-
-## Fleet CLI (Braintied machines)
-
-On a Braintied Mac the CLI is `@braintied/watchtower` on PATH.
+`pnpm add @braintied/watchtower` (GitHub Packages, fleet machines).
+CLI on PATH: `watchtower --help`.
 
 | Command | Job |
 |---------|-----|
