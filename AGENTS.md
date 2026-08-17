@@ -110,9 +110,11 @@ A Grok POST to `npm start` is valid. Adapters live in
 Stop a real Claude Code session, then:
 
 ```bash
-psql postgresql://postgres:postgres@localhost:54322/postgres \
+psql -h localhost -p 54322 -U postgres -d postgres \
   -c "SELECT count(*) FROM watchtower.coding_sessions;"
 ```
+
+Compose credentials live in `docker-compose.yml`.
 
 Count must be greater than zero. Zero is a failed setup, not a
 quiet system.

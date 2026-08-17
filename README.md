@@ -158,8 +158,11 @@ Migrations: `migrations/` is mounted into Postgres
 `001_init.sql`. If the volume already exists empty of tables:
 
 ```bash
-npx supabase db push --db-url postgresql://postgres:postgres@localhost:54322/postgres
+npx supabase db push --db-url "$WATCHTOWER_DATABASE_URL"
 ```
+
+`WATCHTOWER_DATABASE_URL` is **your** URL. For compose, copy the
+`postgres` service from `docker-compose.yml` (localhost port 54322).
 
 Without Docker:
 
@@ -221,11 +224,14 @@ Grok also reads `~/.claude/settings.json`.
 3. Query **your** Postgres:
 
 ```bash
-psql postgresql://postgres:postgres@localhost:54322/postgres \
+psql -h localhost -p 54322 -U postgres -d postgres \
   -c "SELECT session_key, source, project_slug, message_count, created_at
       FROM watchtower.coding_sessions
       ORDER BY created_at DESC LIMIT 5;"
 ```
+
+Compose credentials live in `docker-compose.yml`. Do not commit a
+password into this tree.
 
 A new row with `source_hook` / your `session_key` means capture
 works. Zero rows is a failed setup, not a quiet system. Check `jq`
