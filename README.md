@@ -1,14 +1,21 @@
 # Watchtower (open-source surface)
 
-**Open-source AI coding session intelligence** — a public subset of Braintied Watchtower.
+**Created:** 2026-03-30 (PT)
+**Updated:** 2026-08-17 (PT)
+**Version:** 0.1.0 (OSS snapshot)
+
+Public Apache subset of Braintied Watchtower. This repo is **not** the
+live system. It is a frozen facade (last product commit 2026-03-30).
+
+Do not put new Watchtower core here, and do not put it inside the
+Braintied website repo (`~/Development/Braintied`). The core is a
+package.
 
 ## Source of truth (fleet)
 
-The full, maintained product lives in the Braintied stack monorepo:
-
-| Package | What it owns |
+| Piece | What it owns |
 |---------|----------------|
-| **`@braintied/watchtower`** | Multi-agent session capture, hooks, runner brains, project-monitoring pure logic, **agentic manager** (`status`/`plan`/`manage install`) |
+| **`@braintied/watchtower` 5.0.1** | Portable core: capture, hooks, floor, board, brains, manage. Lives in `stack/packages/watchtower`. |
 | **ora-ai `apps/watchtower`** | Fly service (`ora-watchtower.fly.dev`) — webhooks, Inngest, Cortex |
 
 ```bash
