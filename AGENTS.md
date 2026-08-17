@@ -4,9 +4,7 @@ This tree is a generated Apache snapshot of the capture client in
 `@braintied/watchtower 5.0.1`.
 `packages/watchtower/scripts/sync-oss.mjs` writes the allowlisted
 capture files, `README.md`, and this file. Version numbers stay
-locked to the stack package. `node scripts/stack.mjs snapshot`
-refreshes this repo without an npm publish. `publish` runs the same
-sync after a new version and when the version is already on the registry.
+locked to the stack package. `stack.mjs publish` runs the sync.
 
 A competent agent with only this file and a terminal edits the
 *right* tree. A careless one is stopped before it adds an adapter
@@ -26,6 +24,21 @@ The product is Watchtower. `ora-watchtower` is the Fly hostname.
 Watchtower is the fleet (181 projects, 12,926 sessions as of
 2026-08-17), not Sentigen.
 
+This snapshot is **code**. It is not a credential for Braintied Fly
+or Cortex. Strangers do not POST to `ora-watchtower.fly.dev`.
+`hooks/lib/refuse-hosted.sh` returns 0 on that host; the OSS Stop
+hook then skips the curl and still exits 0. Do not add our Supabase
+project URL as a default. Do not "helpfully" point
+`WATCHTOWER_SESSION_WEBHOOK_URL` at production so a demo works.
+
+If a company wants Watchtower hosted, that is
+[consulting](https://www.braintied.com/consulting) /
+hello@braintied.com: their host, their database. Not ours.
+
+Public package on this repo: `@braintied/watchtower-capture`.
+`@braintied/watchtower` is the private fleet package on
+`braintied/stack`. Do not publish the fleet tarball from here.
+
 ## What this tree actually contains
 
 Synced on every publish (`ALLOWLIST` + generated hook + docs):
@@ -38,6 +51,7 @@ Synced on every publish (`ALLOWLIST` + generated hook + docs):
 | `hooks/lib/session-key.sh` | `source:<uuid>`, process walk, no event whitelist |
 | `hooks/lib/session-key.test.sh` | must-fire / must-not-fire for the walker |
 | `hooks/lib/project-slug.sh` | shell half of the resolver, cache, `cwd_is_repo` |
+| `hooks/lib/refuse-hosted.sh` | refuse `ora-watchtower.fly.dev` / `.internal` |
 | `hooks/grok/session-event.json` | Grok PostToolUse wiring |
 | `hooks/session-ingest.sh` | OSS Stop hook, webhook only |
 
@@ -59,8 +73,7 @@ sync. The fleet file still names `https://ora-watchtower.fly.dev`.
 
 1. Edit `braintied/stack` → `packages/watchtower`.
 2. `pnpm run verify` in that package (typecheck + test + build).
-3. `node scripts/stack.mjs snapshot --only @braintied/watchtower`
-   (or `node packages/watchtower/scripts/sync-oss.mjs --apply --push`).
+3. `node packages/watchtower/scripts/sync-oss.mjs --apply`.
 4. Do not add adapters, hooks, or session-key logic here first.
 
 Webhook-only Stop hook source is
@@ -134,6 +147,8 @@ in `src/session-adapters.ts` **in the stack package**.
 | Default `cwd_is_repo` to false | attribution gap shrinks on paper | omit ≠ false |
 | `readFileSync` a Codex rollout | silent drop of the largest sessions | stream |
 | Deploy Fly from here | `fly deploy` in this checkout | Indexer lives in ora-ai. Needs G's deploy language |
+| Point OSS hook at our Fly | sessions appear in Braintied Cortex | `refuse-hosted.sh` must stay; do not add a bypass |
+| Share our Supabase as a default | their data in our project | localhost compose, or a project they created |
 | Secrets in this tree | compose file, README, evidence | `.env.local` only. Sync will refuse the known tokens |
 | Next publish wipes a hand-edit | README/AGENTS/allowlist revert | Edit `packages/watchtower/oss/` or the allowlisted source |
 
@@ -167,6 +182,7 @@ from the human README and `sync-oss.test.mjs` must go red.
 - Do not put Watchtower inside `~/Development/Braintied`.
 - Do not deploy the hosted indexer from this checkout.
 - Do not treat Sentigen as Watchtower.
+- Do not point `WATCHTOWER_SESSION_WEBHOOK_URL` at `ora-watchtower.fly.dev`.
 - Do not force-push `main`.
 - Do not delete the remote `watchtower` branch or close its PRs
   without G.
