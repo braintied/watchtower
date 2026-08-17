@@ -1,14 +1,10 @@
 # Watchtower
 
-**Created:** 2026-03-30 (PT)
-**Updated:** 2026-08-17 (PT)
-**Version:** 5.0.1
+Capture coding sessions from Claude Code, Grok, Codex, Cursor, and OpenCode.
+Hooks fire while you work. Adapters pick up the tools that have no hooks.
+Everything posts to a webhook you run.
 
-Public Apache capture client, synced from `@braintied/watchtower` 5.0.1
-on every package publish. This is the hooks + adapters + self-host server.
-
-Floor, board, manage, runner brains, and Cortex privileged REST writers are
-**not** in this repo. They stay in the proprietary stack package.
+**5.0.1** · synced from [`@braintied/watchtower`](https://github.com/braintied/stack/tree/main/packages/watchtower) on every package publish.
 
 ## Install
 
@@ -19,29 +15,24 @@ npm install
 npm run install-hooks
 ```
 
-Point hooks at a Watchtower webhook (default `http://localhost:5003/webhooks/session`):
+Claude Code Stop posts to `http://localhost:5003/webhooks/session` unless you set:
 
 ```bash
 export WATCHTOWER_SESSION_WEBHOOK_URL=https://your-host/webhooks/session
 ```
 
-Grok, Codex, Cursor, and OpenCode sessions are ingested by the adapters in
-`src/session-adapters.ts` (same files as the fleet package).
+Then `npm start` for the local server, or point the hook at your own.
 
-## What is synced
+Grok is tagged `grok:<id>`, Claude `claude:<id>`. That key lives in
+`hooks/lib/session-key.sh`. Disk adapters for Grok, Codex, Cursor, and
+OpenCode are in `src/session-adapters.ts`.
 
-- `src/session-adapters.ts`, `src/project-slug.ts`, `src/types.ts`
-- `hooks/lib/session-key.sh`, `hooks/lib/project-slug.sh`
-- webhook-only `hooks/session-ingest.sh` (no Cortex keys)
+## This repo
 
-## What is not
-
-| Stays proprietary | Where |
-|---|---|
-| Floor, board, manage | `stack/packages/watchtower` |
-| Cortex service-role hooks | same |
-| Fly indexer | `ora-ai/apps/watchtower` |
+The Apache capture client: hooks, adapters, session keys, and a small
+self-host server. Floor, board, manage, and the hosted indexer stay in
+the proprietary Braintied package.
 
 ## License
 
-Apache-2.0. The fleet package `@braintied/watchtower` is proprietary.
+Apache-2.0

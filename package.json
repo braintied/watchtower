@@ -1,7 +1,7 @@
 {
   "name": "watchtower",
   "version": "5.0.1",
-  "description": "Watchtower capture client (Apache). Hooks + adapters synced from @braintied/watchtower 5.0.1. Floor, board, and manage stay in the proprietary package.",
+  "description": "Capture coding sessions from Claude, Grok, Codex, Cursor, and OpenCode. Apache client, version-locked to @braintied/watchtower.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://github.com/braintied/watchtower",
