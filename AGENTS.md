@@ -1,23 +1,43 @@
-# watchtower — Agent Instructions
+# Watchtower — agents
 
-<!-- Harness standard v2. AGENTS.md is the cross-vendor router (Linux
-     Foundation standard; read by Codex, Cursor, Copilot, Devin, Gemini CLI,
-     20+ tools). Keep it SHORT and point at the same canon CLAUDE.md uses —
-     never duplicate content between the two. -->
+This tree is a generated Apache snapshot of the capture client in
+`@braintied/watchtower 5.0.1`.
+`packages/watchtower/scripts/sync-oss.mjs` writes it. Version numbers
+stay locked to the stack package.
 
-{{ONE_LINE_IDENTITY}}
+## Do not
 
-- **How the platform works:** docs/architecture.md
-- **Operating it:** docs/ops-runbook.md
-- **History:** docs/changelog/ (dated entries; proof template inside)
-- **Doc rules:** docs/DOC-GOVERNANCE.md (LIVING docs carry `Last verified`
-  stamps and must match code; FROZEN docs are never rewritten)
+- Do not add adapters, hooks, or session-key logic here first. Change
+  `braintied/stack` → `packages/watchtower`, then
+  `node packages/watchtower/scripts/sync-oss.mjs --apply`.
+- Do not put floor, board, manage, or Cortex writers in this repo.
+- Do not treat `ora-watchtower` as the product. That string is the Fly
+  app name. The product is Watchtower. The package is
+  `@braintied/watchtower`.
+- Do not create `watchtower-core` or put Watchtower inside
+  `~/Development/Braintied` (that tree is braintied.com).
+- Do not deploy the hosted indexer from this checkout.
+- Do not treat Sentigen as Watchtower. Watchtower is the fleet.
 
-## Working rules
+## Work here only when
 
-- `npm run verify (no gate detected — define a verify script or .localci.sh)` must be green before committing (typecheck + lint +
-  test + harness checks).
-- Docs are load-bearing: a change to architecture, env, events, or APIs
-  updates the matching doc in the same commit.
-- Claude-specific instructions live in CLAUDE.md; this file is the
-  tool-agnostic surface. When they would overlap, link — don't copy.
+You are editing the public README, this file, the self-host server
+(`src/index.ts` and the leftover 2026-03 Hono/Inngest tree), or docs
+this snapshot owns.
+
+## Verify
+
+```bash
+npm run typecheck
+```
+
+The public repo still typechecks that 2026-03 server. That gate is
+pre-existing and unrelated to the capture snapshot.
+
+## Map
+
+| Piece | Where |
+|-------|--------|
+| This snapshot | `github.com/braintied/watchtower` |
+| Portable core | `stack/packages/watchtower` · `@braintied/watchtower` |
+| Hosted indexer | `ora-ai/platform/apps/watchtower` · Fly app `ora-watchtower` |
