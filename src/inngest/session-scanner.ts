@@ -255,7 +255,7 @@ function isUuidDirName(name: string): boolean {
 
 /**
  * Convert a Claude project directory name back to a filesystem path.
- * e.g. "-Users-galenoakes-Development-project-name" -> "/Users/galenoakes/Development/project-name"
+ * e.g. "-Users-alice-src-project-name" -> "/Users/alice/src/project-name"
  */
 function dirNameToPath(dirName: string): string {
   // Replace leading dash with /, then replace remaining dashes with /
