@@ -27,6 +27,16 @@ if [ -z "$SESSION_ID" ]; then
 fi
 
 WEBHOOK_URL="${WATCHTOWER_SESSION_START_URL:-http://localhost:5003/webhooks/session-start}"
+HOOK_LIB="$(cd "$(dirname "$0")" && pwd)/lib"
+if [ -f "$HOOK_LIB/refuse-hosted.sh" ]; then
+  # shellcheck source=lib/refuse-hosted.sh
+  . "$HOOK_LIB/refuse-hosted.sh"
+  if watchtower_is_braintied_production "$WEBHOOK_URL"; then
+    echo "watchtower: refusing to POST SessionStart to Braintied production." >&2
+    echo '{"continue": true}'
+    exit 0
+  fi
+fi
 PROJECT_DIR=$(basename "$DIRECTORY")
 ENCODED_DIR=$(echo "$DIRECTORY" | sed 's|/|-|g')
 SESSION_KEY="$ENCODED_DIR/$SESSION_ID"
