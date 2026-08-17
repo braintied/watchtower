@@ -1,8 +1,8 @@
 /**
  * Shared Watchtower types.
  *
- * Source of truth for coding-session producer ids. A server that rejects a
- * source not on this list will 400 the POST.
+ * Source of truth for coding-session producer ids. The Fly service webhook
+ * enum must stay in sync (apps/watchtower session.ts).
  */
 
 export const CODING_SESSION_SOURCES = [

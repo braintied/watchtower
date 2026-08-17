@@ -1,13 +1,17 @@
 /**
  * Session-capture adapters — one per agent/IDE.
  *
+ * Owned by @braintied/watchtower (stack). Platform/ora-ai re-exports or depends on this package.
+ *
  * WHY AN ADAPTER REGISTRY AND NOT A SCRIPT PER TOOL
  * -------------------------------------------------
  * Watchtower's original capture was Claude Code only, because its hooks fire
- * from Claude Code's own lifecycle. Everything else was invisible. A day's
- * sessions then contained none of the work-graph identity another audit had
- * already asked for, and a second pass re-derived the same conclusion because
- * the first finding lived somewhere nothing could read.
+ * from Claude Code's own lifecycle. Everything else was invisible. That cost a
+ * real architectural finding on 2026-07-21: a Codex audit concluded Ora needs
+ * "one traceable work-graph identity" across its loop layers, Watchtower indexed
+ * 299 sessions that day and none of them contained it, and a second audit
+ * re-derived the same conclusion six days later because the first was written
+ * somewhere nothing could read.
  *
  * The lesson is not "add Codex". It is that which tool ran the work should not
  * determine whether the work is remembered. So sources are data, not code
@@ -274,7 +278,7 @@ export const cursorAdapter = {
     }
     if (messages.length === 0) return null;
 
-    // Cursor flattens the absolute path (Users-alice-src-my-app);
+    // Cursor flattens the absolute path (Users-galenoakes-Development-Parlor);
     // the trailing segment matches the basename other sources produce, so work
     // lands against one project rather than a per-tool duplicate.
     const segments = String(file['projectDir']).split('-');

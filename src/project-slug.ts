@@ -2,14 +2,18 @@
  * Resolve a session's project from its working directory.
  *
  * Adapters used to send `path.basename(cwd)`. That is wrong in the two cases
- * that dominate real machines, and it fails silently — the webhook simply finds
+ * that dominate this machine, and it fails silently — the webhook simply finds
  * no matching project and writes `project_id = NULL`, so the session is
  * captured but unattributable.
  *
- * `path.basename` of a linked worktree folder is the worktree name, not the
- * project (`feature-login` is not the repo). Directory names that are not the
- * git identity fail the same way. Sessions started outside a repo (a home
- * directory, a plans folder) cannot be attributed from cwd at all.
+ * Measured 2026-08-12, 24h window: 174 of 276 sessions had no project.
+ *   - 74 (43%) were git WORKTREES. `~/Development/.worktrees/sentigen-onboarding-demo`
+ *     has basename `sentigen-onboarding-demo`, which is not a project and never
+ *     will be. There are ~513 worktrees on this machine, so this is structural,
+ *     not incidental.
+ *   - ~38 more were real repos whose directory name is not their project slug.
+ *   - The rest started outside a repo (`/Users/g`, `~/.claude/plans/…`), which no
+ *     cwd heuristic can fix.
  *
  * So resolve git IDENTITY instead of a path segment, in descending order of
  * trustworthiness:
@@ -196,8 +200,8 @@ const ABSOLUTE_PATH = /\/(?:Users|home|opt|srv|var|private)\/[^\s'"`,;:)\]}]+/g;
  * Resolve a project from paths a session MENTIONED, for sessions whose own cwd
  * is not a repository.
  *
- * A session started in a home directory or a plans folder and then spending
- * hours inside a repo is the largest remaining attribution gap; the cwd
+ * A session started in `/Users/g` or `~/.claude/plans` and then spending six
+ * hours inside a repo is the single largest remaining attribution gap; the cwd
  * ladder cannot see it, but the work leaves paths all over the transcript.
  *
  * Deliberately reuses `resolveProjectSlug` on the discovered directory rather
