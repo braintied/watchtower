@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Refuse Braintied production hosts from the Apache capture client.
 #
-# This tree is code you run. It is not a login to Braintied's Fly
-# indexer or Cortex. ora-watchtower.fly.dev is ours. A stranger's
-# session must never land there.
+# This tree is code you run. It is not a login to Braintied's
+# machines. ora-watchtower.fly.dev is ours. A stranger's session
+# must never land there.
 #
 # Returns 0 when the URL is ours (caller must skip the POST).
 # Returns 1 when the URL is the caller's (localhost, their host).

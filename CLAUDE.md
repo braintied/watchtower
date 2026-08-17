@@ -1,21 +1,22 @@
 # Watchtower
 
-Apache capture client for Braintied Watchtower. Generated from
-`@braintied/watchtower` by `packages/watchtower/scripts/sync-oss.mjs`.
-
-Canon: [AGENTS.md](./AGENTS.md) · humans: [README.md](./README.md) ·
-how it is wired: [docs/architecture.md](./docs/architecture.md).
+Apache-2.0 capture client. Humans: [README.md](./README.md).
+Agents: [AGENTS.md](./AGENTS.md). Wiring:
+[docs/architecture.md](./docs/architecture.md).
 
 ## Do not
 
-- Do not add adapters or hooks here first. Edit `braintied/stack`
-  `packages/watchtower`, then run `sync-oss.mjs --apply`.
-- Do not treat `ora-watchtower` as the product name. That is the Fly
-  app. The product is Watchtower. The package is `@braintied/watchtower`.
-- Do not deploy the hosted indexer from this checkout.
+- Do not point `WATCHTOWER_SESSION_WEBHOOK_URL` at
+  `ora-watchtower.fly.dev`. That host is Braintied's. The hook
+  refuses it.
+- Do not treat `ora-watchtower` as the product name. The product
+  is Watchtower. The public package is
+  `@braintied/watchtower-capture`.
+- Do not deploy using the Fly app name `ora-watchtower`.
 
 ## Verify
 
 ```bash
-npm run verify
+npm run typecheck
+curl -sS http://localhost:5003/health
 ```

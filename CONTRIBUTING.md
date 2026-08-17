@@ -1,19 +1,23 @@
 # Contributing
 
-This repo is a **generated snapshot** of the open capture client in
-`@braintied/watchtower`. Do not add adapters or hooks here first.
+This repository is the public Apache-2.0 capture client for
+Watchtower. Open issues and pull requests here.
 
-| Change | Where |
-|--------|--------|
-| Adapters, session-key, project-slug, types | `braintied/stack` → `packages/watchtower` |
-| Webhook-only Stop hook | `packages/watchtower/oss/session-ingest.sh` |
-| Fly service / Cortex writers / floor / board / manage | `braintied/stack` or `braintied/ora-ai` — not here |
+| Change | Where it lands |
+|--------|----------------|
+| Adapters, session-key, project-slug, types | `src/` in this repo |
+| Webhook-only Stop hook | `hooks/session-ingest.sh` |
+| Docs for humans | `README.md` |
+| Docs for agents | `AGENTS.md` |
 
-After the package lands:
+This tree is also generated from a private package. An accepted PR
+is folded back into that package and re-synced, so the next
+snapshot includes it. You do not need access to the private package
+to contribute.
 
-```bash
-node packages/watchtower/scripts/sync-oss.mjs --apply --push
-```
+Do not add a connection to `ora-watchtower.fly.dev`. Do not put
+secrets in docs, compose, or examples. Local values belong in
+`.env.local`.
 
-`stack.mjs publish` runs that automatically when `@braintied/watchtower`
-publishes. Version numbers stay locked.
+Setup for a reviewer: [README.md](./README.md).
+Agent rules: [AGENTS.md](./AGENTS.md).
