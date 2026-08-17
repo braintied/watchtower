@@ -1,15 +1,23 @@
-# Watchtower — Self-Hosted Setup
+# Watchtower — local compose
 #
-# One-command start:
-#   docker compose up
+# One command: docker compose up --build
 #
-# This runs:
-#   - Supabase (PostgreSQL + pgvector + PostgREST)
-#   - Watchtower server (Hono + Inngest)
-#   - Inngest dev server (background job processing)
+# Starts four processes on YOUR laptop:
+#   db        Postgres 15 + pgvector     host port 54322
+#   rest      PostgREST (HTTP in front
+#             of the watchtower schema)  host port 54321
+#   inngest   local background-job UI    host port 8288
+#   watchtower leftover HTTP server      host port 5003
 #
-# After starting, run migrations:
-#   npx supabase db push --db-url postgresql://postgres:postgres@localhost:54322/postgres
+# The SUPABASE_ env names on the watchtower service are the
+# leftover @supabase/supabase-js client's. They point at the
+# `rest` container, not at supabase.com.
+#
+# Capture does not need ANTHROPIC_API_KEY or VOYAGE_API_KEY.
+# Leave them empty.
+#
+# First boot applies migrations/ via docker-entrypoint-initdb.d.
+# Human setup: README.md. Agent skill: AGENTS.md.
 
 version: '3.8'
 
