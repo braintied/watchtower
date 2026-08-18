@@ -5,7 +5,7 @@ This file is the skill. Follow it in order. Do not improvise a
 connection to our machines.
 
 This tree is a generated Apache snapshot of the capture client in
-`@braintied/watchtower 5.3.0`. Humans read [README.md](./README.md)
+`@braintied/watchtower 5.3.1`. Humans read [README.md](./README.md)
 for the same setup, written for them.
 
 ## What you are building
