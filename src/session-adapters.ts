@@ -54,6 +54,28 @@ export interface SessionAdapter {
   readonly id: string;
   /** Value written to coding_sessions.source; must be accepted by the webhook enum. */
   readonly source: string;
+  /**
+   * May this adapter's payload go to `POST /webhooks/session`? Default true.
+   *
+   * False for a BACKFILL adapter — one writing turns onto session rows some
+   * other producer already owns. The webhook is not a passive recorder: on
+   * `origin/main` it reassigns `turn_index` itself as a per-role ordinal over
+   * the messages it kept (ignoring the ones the payload supplies), upserts with
+   * `metadata = EXCLUDED.metadata`, and sets `coding_sessions.message_count =
+   * EXCLUDED.message_count` outright.
+   *
+   * For the Claude adapters all three are destructive. The reassigned ordinals
+   * collide with the hook-owned assistant numbering this package went to
+   * trouble to reproduce; the metadata overwrite strips `human_authored` and
+   * `redacted` off every row it touches; and a `claude-history` payload
+   * carrying 22 typed prompts would overwrite the real `message_count` of a
+   * 400-message session — the number `session-analysis-trigger` gates on.
+   *
+   * So they persist and do not post. The session rows already exist: the hooks
+   * create them at SessionStart, which is the whole reason these adapters key
+   * on `claude:<uuid>`.
+   */
+  readonly postsSession?: boolean;
   /** Is this tool present on this machine at all? */
   detect(): boolean;
   /** Sessions touched since `sinceMs`. Cheap: stat only, no parsing. */
@@ -618,15 +640,412 @@ export const grokAdapter: SessionAdapter = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// claude-code (local JSONL transcripts)
+//
+// WHY THIS EXISTS DESPITE THE HOOKS
+// ---------------------------------
+// The hooks are live and they work, and they are not complete. Measured
+// 2026-08-18: 4,452 of 9,197 claude_code sessions (48%) have any stored message
+// body at all, and `coding_sessions.message_count` sums to ~2.4M against ~225k
+// stored rows. The hooks capture what happens while they are installed and
+// firing; a session that predates them, ran on a machine without them, or lost
+// a curl to a network blip leaves a session row with no conversation in it.
+// The transcript on disk has the whole thing.
+//
+// LAYOUT, MEASURED ON THIS MACHINE 2026-08-18
+//   ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl          347 files  <- these
+//   ~/.claude/projects/<encoded-cwd>/<sessionId>/subagents/*.jsonl  2,854  <- NOT these
+//   ~/.claude/projects/<encoded-cwd>/<sessionId>/workflows/*.json
+// Only the top-level `<sessionId>.jsonl` is the session. The `subagents/`
+// siblings are one file per Task-tool subagent, and their user turns are the
+// ORCHESTRATOR's briefs, not a person's — ingesting them would pour thousands
+// of agent-written prompts into the founder corpus wearing role='user'. Hence
+// depth-1 discovery, never a recursive walk.
+//
+// Retention is ~30 days (2.9 GB here, 2026-07-19 → 08-18), so this adapter
+// backfills a rolling recent window and the database stays the fuller record
+// for anything older. That asymmetry is the reason `claudeHistoryAdapter`
+// below exists as well.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CLAUDE_PROJECTS_ROOT = path.join(homedir(), '.claude', 'projects');
+
+/** Transient notices Claude Code writes as assistant turns. Not conversation. */
+function isTransientAssistantNotice(text: string): boolean {
+  if (text.startsWith('API Error:')) return true;
+  if (text.includes('temporarily limiting requests')) return true;
+  return false;
+}
+
+/**
+ * Assistant text, exactly as `session-assistant-messages.sh` computes it:
+ * the `text` parts of `message.content`, joined by newline. `thinking` and
+ * `tool_use` parts are deliberately dropped — matching the hook matters more
+ * than completeness here, because a different answer means a different
+ * `turn_index` and a duplicated row.
+ */
+function claudeAssistantText(entry: Record<string, unknown>): string {
+  const message = entry['message'];
+  if (message === null || typeof message !== 'object') return '';
+  const content = (message as Record<string, unknown>)['content'];
+  if (!Array.isArray(content)) return extractText(content).trim();
+  return content
+    .map((part) => {
+      if (part === null || typeof part !== 'object') return '';
+      const typed = part as Record<string, unknown>;
+      if (typed['type'] !== 'text') return '';
+      return typeof typed['text'] === 'string' ? typed['text'] : '';
+    })
+    .filter((t) => t !== '')
+    .join('\n')
+    .trim();
+}
+
+/**
+ * User text. `type: 'user'` covers both what the person typed AND every
+ * `tool_result` the runtime feeds back, which is the bulk of them. Only the
+ * string form and `text` parts are conversation.
+ */
+function claudeUserText(entry: Record<string, unknown>): string {
+  if (entry['isMeta'] === true) return '';
+  const message = entry['message'];
+  if (message === null || typeof message !== 'object') return '';
+  const content = (message as Record<string, unknown>)['content'];
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      if (part === null || typeof part !== 'object') return '';
+      const typed = part as Record<string, unknown>;
+      if (typed['type'] !== 'text') return ''; // tool_result, image, …
+      return typeof typed['text'] === 'string' ? typed['text'] : '';
+    })
+    .filter((t) => t !== '')
+    .join('\n')
+    .trim();
+}
+
+export const claudeAdapter: SessionAdapter = {
+  id: 'claude',
+  source: 'claude_code',
+  // Backfill onto hook-owned session rows. See SessionAdapter.postsSession.
+  postsSession: false,
+  detect: () => existsSync(CLAUDE_PROJECTS_ROOT),
+
+  discover(sinceMs: number) {
+    const out: DiscoveredSession[] = [];
+    if (!existsSync(CLAUDE_PROJECTS_ROOT)) return out;
+    for (const projectDir of readdirSync(CLAUDE_PROJECTS_ROOT)) {
+      const dir = path.join(CLAUDE_PROJECTS_ROOT, projectDir);
+      let dirStat;
+      try {
+        dirStat = statSync(dir);
+      } catch {
+        continue;
+      }
+      if (!dirStat.isDirectory()) continue;
+      for (const name of readdirSync(dir)) {
+        if (!name.endsWith('.jsonl')) continue;
+        const full = path.join(dir, name);
+        let st;
+        try {
+          st = statSync(full);
+        } catch {
+          continue;
+        }
+        // Depth 1 only. A `<sessionId>/` directory is skipped here by virtue of
+        // not ending in `.jsonl`; its subagent transcripts are never reached.
+        if (!st.isFile()) continue;
+        if (st.mtimeMs < sinceMs) continue;
+        out.push({
+          path: full,
+          mtimeMs: st.mtimeMs,
+          projectDir,
+          sessionId: name.slice(0, -'.jsonl'.length),
+        });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * STREAMED. The largest transcript on this machine is 60 MB and several
+   * exceed Node's string cap when concatenated; the codex adapter learned this
+   * the expensive way (whole-file reads succeeded on every trivial session and
+   * dropped the substantial ones).
+   */
+  async parse(file: DiscoveredSession) {
+    const messages: CapturedMessage[] = [];
+    const toolsUsed = new Set<string>();
+    let cwd: string | null = null;
+    let sessionIdFromFile: string | null = null;
+    let firstTs: string | null = null;
+    let lastTs: string | null = null;
+
+    // Two independent ordinal namespaces, both counting EVERY entry of their
+    // role including the ones that produce no row. See CapturedMessage.turn_index.
+    let assistantOrdinal = -1;
+    let userOrdinal = -1;
+
+    const rl = createInterface({
+      input: createReadStream(String(file['path']), { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        continue; // a torn line must not lose the rest of the session
+      }
+
+      if (cwd === null && typeof entry['cwd'] === 'string' && entry['cwd'] !== '') {
+        cwd = entry['cwd'];
+      }
+      if (sessionIdFromFile === null && typeof entry['sessionId'] === 'string') {
+        sessionIdFromFile = entry['sessionId'];
+      }
+
+      const kind = typeof entry['type'] === 'string' ? entry['type'] : '';
+      if (kind !== 'user' && kind !== 'assistant') continue;
+
+      // A sidechain entry is a subagent turn spliced into the main transcript
+      // by older Claude Code builds. Same reason the subagents/ directory is
+      // skipped: those user turns are an orchestrator's, not a person's.
+      if (entry['isSidechain'] === true) continue;
+
+      const ts = typeof entry['timestamp'] === 'string' ? entry['timestamp'] : null;
+
+      if (kind === 'assistant') {
+        assistantOrdinal += 1;
+        const message = entry['message'];
+        if (message !== null && typeof message === 'object') {
+          const content = (message as Record<string, unknown>)['content'];
+          if (Array.isArray(content)) {
+            for (const part of content) {
+              if (part === null || typeof part !== 'object') continue;
+              const typed = part as Record<string, unknown>;
+              if (typed['type'] === 'tool_use' && typeof typed['name'] === 'string') {
+                toolsUsed.add(typed['name']);
+              }
+            }
+          }
+        }
+        const text = claudeAssistantText(entry);
+        if (text === '' || isTransientAssistantNotice(text)) continue;
+        if (ts !== null) {
+          if (firstTs === null) firstTs = ts;
+          lastTs = ts;
+        }
+        messages.push({
+          role: 'assistant',
+          content: truncate(text),
+          timestamp: ts ?? new Date(Number(file['mtimeMs'])).toISOString(),
+          turn_index: assistantOrdinal,
+          metadata: { ingest: 'claude_jsonl' },
+        });
+        continue;
+      }
+
+      userOrdinal += 1;
+      const text = claudeUserText(entry);
+      if (text === '') continue;
+      if (ts !== null) {
+        if (firstTs === null) firstTs = ts;
+        lastTs = ts;
+      }
+      messages.push({
+        role: 'user',
+        content: truncate(text),
+        timestamp: ts ?? new Date(Number(file['mtimeMs'])).toISOString(),
+        turn_index: userOrdinal,
+        metadata: { ingest: 'claude_jsonl' },
+      });
+    }
+
+    if (messages.length === 0) return null;
+    const deduped = dedupeMessages(messages);
+    const sessionId = sessionIdFromFile ?? String(file['sessionId']);
+
+    return {
+      // `claude:<uuid>` — the key `~/.claude/hooks/lib/session-key.sh` resolves
+      // and the only key `coding_sessions` carries for this source. Backfill has
+      // to land on the EXISTING session rows; a second key form would mint twins,
+      // which is exactly the defect that hook fixed on 2026-08-16.
+      session_key: `claude:${sessionId}`,
+      source: 'claude_code',
+      project_slug: cwd !== null ? path.basename(cwd) : undefined,
+      cwd: cwd ?? undefined,
+      messages: deduped,
+      tools_used: toolsUsed.size > 0 ? [...toolsUsed] : undefined,
+      message_count: deduped.length,
+      session_started_at: firstTs ?? undefined,
+      session_ended_at: lastTs ?? new Date(Number(file['mtimeMs'])).toISOString(),
+      metadata: {
+        ingest: 'claude_jsonl',
+        transcript_file: path.basename(String(file['path'])),
+        project_dir: String(file['projectDir']),
+        cwd,
+      },
+    };
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// claude-history (~/.claude/history.jsonl)
+//
+// One line per prompt the person actually typed, across every project, going
+// back further than the transcripts do: 5,370 rows, 2026-07-09 → 08-17, ~472k
+// chars, and — uniquely on this machine — ZERO machine markers. No
+// task-notification, no system-reminder, no compaction summary. It is the
+// purest channel of G's own words the fleet has.
+//
+// It exists as its own adapter because a session whose transcript has aged out
+// of the 30-day window still has its prompts here. Without this, three months of
+// direction is recoverable only for the last thirty days of it.
+//
+// Row shape: { display, pastedContents, timestamp (epoch ms), project, sessionId }
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CLAUDE_HISTORY_FILE = path.join(homedir(), '.claude', 'history.jsonl');
+
+/**
+ * `turn_index` offset for history rows.
+ *
+ * Both this adapter and `claudeAdapter` write role='user' under the same
+ * `claude:<uuid>` key, and their ordinals are NOT the same sequence — the
+ * transcript counts tool_result entries that never appear here. Numbered from
+ * zero they would upsert over each other on `(session_key, role, turn_index)`
+ * and one channel would silently overwrite the other. A disjoint namespace is
+ * how `session-event.sh` already keeps its tool rows apart (it uses 1,000,000);
+ * 2,000,000 keeps this clear of both.
+ */
+export const CLAUDE_HISTORY_TURN_OFFSET = 2_000_000;
+
+/** `/login`, `/clear` — a command, not a thing he said. */
+function isBareSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z][\w:-]*$/.test(text.trim());
+}
+
+interface HistoryRow {
+  display: string;
+  timestamp: number;
+  project: string;
+}
+
+export const claudeHistoryAdapter: SessionAdapter = {
+  id: 'claude-history',
+  source: 'claude_code',
+  // Backfill onto hook-owned session rows. See SessionAdapter.postsSession.
+  // This one is the sharpest case: its message_count is the typed-prompt count,
+  // and the webhook would write it over the session's real one.
+  postsSession: false,
+  detect: () => existsSync(CLAUDE_HISTORY_FILE),
+
+  discover(sinceMs: number) {
+    if (!existsSync(CLAUDE_HISTORY_FILE)) return [];
+    const bySession = new Map<string, HistoryRow[]>();
+    for (const line of readFileSync(CLAUDE_HISTORY_FILE, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const sessionId = typeof entry['sessionId'] === 'string' ? entry['sessionId'] : '';
+      const display = typeof entry['display'] === 'string' ? entry['display'] : '';
+      if (sessionId === '' || display.trim() === '') continue;
+      const rows = bySession.get(sessionId) ?? [];
+      rows.push({
+        display,
+        timestamp: typeof entry['timestamp'] === 'number' ? entry['timestamp'] : 0,
+        project: typeof entry['project'] === 'string' ? entry['project'] : '',
+      });
+      bySession.set(sessionId, rows);
+    }
+
+    const out: DiscoveredSession[] = [];
+    for (const [sessionId, rows] of bySession) {
+      // The ordinal is assigned over ALL rows of the session, so a session is
+      // offered whole or not at all. Filtering rows by `since` would renumber
+      // the survivors and land them on someone else's turn_index.
+      const newest = rows.reduce((max, r) => (r.timestamp > max ? r.timestamp : max), 0);
+      if (newest < sinceMs) continue;
+      out.push({ sessionId, rows, mtimeMs: newest });
+    }
+    return out;
+  },
+
+  async parse(file: DiscoveredSession) {
+    const rows = file['rows'] as HistoryRow[];
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const messages: CapturedMessage[] = [];
+    let project = '';
+    let ordinal = -1;
+    for (const row of rows) {
+      ordinal += 1;
+      if (project === '' && row.project !== '') project = row.project;
+      const display = row.display.trim();
+      if (display === '' || isBareSlashCommand(display)) continue;
+      messages.push({
+        role: 'user',
+        content: truncate(display),
+        timestamp:
+          row.timestamp > 0 ? new Date(row.timestamp).toISOString() : new Date(Number(file['mtimeMs'])).toISOString(),
+        turn_index: CLAUDE_HISTORY_TURN_OFFSET + ordinal,
+        metadata: { ingest: 'claude_history' },
+      });
+    }
+    if (messages.length === 0) return null;
+
+    const timestamps = rows.map((r) => r.timestamp).filter((t) => t > 0);
+    return {
+      session_key: `claude:${file['sessionId']}`,
+      source: 'claude_code',
+      project_slug: project !== '' ? path.basename(project) : undefined,
+      cwd: project !== '' ? project : undefined,
+      messages,
+      message_count: messages.length,
+      session_started_at:
+        timestamps.length > 0 ? new Date(Math.min(...timestamps)).toISOString() : undefined,
+      session_ended_at:
+        timestamps.length > 0 ? new Date(Math.max(...timestamps)).toISOString() : undefined,
+      metadata: { ingest: 'claude_history', project },
+    };
+  },
+};
+
 /**
  * Every adapter. Order is display order only.
  *
+ * `claude` and `claude-history` were absent until 2026-08-18 on the reasoning
+ * that the hooks already capture Claude Code. That was true of what the hooks
+ * SEE and false of the corpus: 48% of claude_code sessions had no stored body,
+ * and `~/.claude/history.jsonl` — the cleanest channel of typed direction on
+ * the machine — had no reader at all. Both write onto the hooks' own
+ * `claude:<uuid>` keys, so this is backfill, not a second producer.
+ *
  * DELIBERATELY ABSENT:
- *  - claude-code: already captured by `~/.claude/hooks`. A second producer would
- *    double-write the corpus that already works.
  *  - gemini-cli: `~/.gemini` holds config and credentials, no transcripts.
  *    Recorded here so nobody re-checks.
  *  - antigravity: 7 conversations in protobuf (`.pb`). Needs a schema we do not
  *    have; the volume does not currently justify reverse-engineering one.
+ *  - `~/.claude/projects/<sessionId>/subagents/*.jsonl`: 2,854 files whose
+ *    role='user' turns are orchestrator briefs. Not a person.
  */
-export const ADAPTERS: SessionAdapter[] = [codexAdapter, cursorAdapter, opencodeAdapter, grokAdapter];
+export const ADAPTERS: SessionAdapter[] = [
+  codexAdapter,
+  cursorAdapter,
+  opencodeAdapter,
+  grokAdapter,
+  claudeAdapter,
+  claudeHistoryAdapter,
+];

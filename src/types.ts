@@ -21,6 +21,26 @@ export interface CapturedMessage {
   role: string;
   content: string;
   timestamp: string;
+  /**
+   * Explicit ordinal, when the adapter must reproduce a numbering some OTHER
+   * writer already owns. Omit it and `rowsFromPayload` assigns a per-role
+   * ordinal over the rows it keeps, which is right for every source that has
+   * no second writer.
+   *
+   * Claude Code has one. `~/.claude/hooks/session-assistant-messages.sh` writes
+   * assistant rows numbered by position among ALL assistant entries in the
+   * transcript — empty tool-only turns are skipped but still consume their
+   * ordinal. A per-kept-row counter diverges from that on the first tool call
+   * and every later row lands on a fresh `(session_key, role, turn_index)`,
+   * so the "idempotent" upsert would duplicate the whole conversation.
+   */
+  turn_index?: number;
+  /**
+   * Row-level metadata, merged into `session_messages.metadata` by
+   * `rowsFromPayload`. For which producer wrote the row (`ingest`), not for
+   * session-level facts — those belong on `SessionPayload.metadata`.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionPayload {

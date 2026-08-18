@@ -5,7 +5,7 @@ coding agents tried, which of those attempts failed, and the error that
 came back, so the next session does not repeat the same approach.
 
 This repository is the Apache **capture client**: hooks, disk adapters,
-session keys, and a small server you run. Version **5.2.0**.
+session keys, and a small server you run. Version **5.3.0**.
 Braintied maintainers refresh it with `node scripts/stack.mjs snapshot`.
 
 ## What Watchtower is
