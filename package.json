@@ -1,6 +1,6 @@
 {
   "name": "@braintied/watchtower-capture",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Apache capture client for Watchtower. Your host, your database. Not Braintied Fly or Cortex.",
   "type": "module",
   "license": "Apache-2.0",

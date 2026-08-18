@@ -5,7 +5,7 @@ This file is the skill. Follow it in order. Do not improvise a
 connection to our machines.
 
 This tree is a generated Apache snapshot of the capture client in
-`@braintied/watchtower 5.1.0`. Humans read [README.md](./README.md)
+`@braintied/watchtower 5.2.0`. Humans read [README.md](./README.md)
 for the same setup, written for them.
 
 ## What you are building
@@ -96,7 +96,7 @@ Copy the commands. Check the verify after each step.
    Stop a real Claude Code session, then:
 
    ```bash
-   psql postgresql://postgres:postgres@localhost:54322/postgres \
+   psql postgresql://postgres@localhost:54322/postgres \
      -c "SELECT count(*) FROM watchtower.coding_sessions;"
    ```
 
