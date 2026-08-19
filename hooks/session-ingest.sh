@@ -1,5 +1,5 @@
 #!/bin/bash
-# OSS Stop hook — webhook only. Synced from @braintied/watchtower 5.3.1.
+# OSS Stop hook — webhook only. Synced from @braintied/watchtower 6.0.0.
 # Fleet hooks that PATCH Cortex with a privileged REST key are not in this tree.
 #
 # Env: WATCHTOWER_SESSION_WEBHOOK_URL (default http://localhost:5003/webhooks/session)
