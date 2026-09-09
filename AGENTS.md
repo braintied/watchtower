@@ -5,7 +5,7 @@ Braintied. This file is the skill. Follow it in order. Do not
 improvise a connection to Braintied machines.
 
 This tree is a generated Apache-2.0 snapshot of the capture client
-in `@braintied/watchtower-capture 6.3.0`. Humans read
+in `@braintied/watchtower-capture 6.3.1`. Humans read
 [README.md](./README.md) for the same setup, with a longer
 explanation of every named service.
 
