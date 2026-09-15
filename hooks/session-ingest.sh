@@ -1,5 +1,5 @@
 #!/bin/bash
-# OSS Stop hook — webhook only. Synced from @braintied/watchtower 6.3.2.
+# OSS Stop hook — webhook only. Synced from @braintied/watchtower 6.4.0.
 # The fleet hook that writes to Braintied's hosted store is not in this tree.
 #
 # Env: WATCHTOWER_SESSION_WEBHOOK_URL (default http://localhost:5003/webhooks/session)

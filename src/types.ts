@@ -80,6 +80,20 @@ export interface SessionPayload {
   cwd_is_repo?: boolean;
   messages: CapturedMessage[];
   tools_used?: string[];
+  /**
+   * Absolute paths the session edited or read, when the adapter can see tool
+   * inputs. Carried to `coding_sessions.files_touched`. The webhook already
+   * accepts `files_touched`; it was simply not on this type, so an adapter that
+   * knew its files had nowhere to put them.
+   */
+  files_touched?: string[];
+  /**
+   * Absolute paths the session MENTIONED — tool inputs and shell commands —
+   * even when the work happened outside a repo. `ingest` feeds these to
+   * `resolveProjectSlugFromContent` so a session that started in a home
+   * directory still attributes to the repository it actually worked in.
+   */
+  mentioned_paths?: string[];
   message_count: number;
   session_started_at?: string;
   session_ended_at?: string;

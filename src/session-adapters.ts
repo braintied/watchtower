@@ -316,9 +316,17 @@ export const cursorAdapter = {
 // opencode
 //
 // SQLite rather than files: session / message / part, where message.data and
-// part.data are JSON blobs. Zero rows on this machine as of 2026-07-27 —
-// installed, not yet used. The adapter ships anyway so the first real session is
-// captured without anyone remembering to wire it up.
+// part.data are JSON blobs. Measured on this machine 2026-09-14: `message.data`
+// carries role/model/path/tokens bookkeeping and ZERO conversational text (0 of
+// 2,401 rows have content/text/parts). The words live in the sibling `part`
+// table, keyed by `part.message_id` -> `message.id`:
+//
+//   part.data by type, per role:
+//     text       {"type":"text","text":"…"}          assistant AND user words
+//     reasoning  {"type":"reasoning","text":"…"}     chain-of-thought — DROPPED
+//     tool       {"type":"tool","tool":"bash","state":{"input":{"command"|"filePath"}}}
+//     file       {"type":"file","url":"data:…;base64"}  user attachment — DROPPED
+//     step-start / step-finish                        noise — DROPPED
 //
 // Read-only, and via the sqlite3 CLI rather than a driver dependency: this
 // script must stay runnable from a bare launchd job with no install step.
@@ -338,70 +346,242 @@ function sqlite(db: string, sql: string): Record<string, unknown>[] {
   }
 }
 
+/** `time_*` columns are epoch ms; accept a seconds value defensively, as discover does. */
+function opencodeMs(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n > 1e12 ? n : n * 1000;
+}
+
+/**
+ * `session.model` is a JSON object (`{"id":"deepseek/deepseek-v4-pro",…}`) on
+ * this machine, or a bare id on older rows. Return the raw `id`; downstream
+ * reconciles provider/model — this package stores what the row said.
+ */
+function opencodeSessionModelId(model: unknown): string | undefined {
+  if (model === null || model === undefined) return undefined;
+  if (typeof model === 'object') {
+    const id = (model as Record<string, unknown>)['id'];
+    return typeof id === 'string' && id !== '' ? id : undefined;
+  }
+  if (typeof model === 'string') {
+    const trimmed = model.trim();
+    if (trimmed === '') return undefined;
+    if (!trimmed.startsWith('{')) return trimmed;
+    try {
+      const id = (JSON.parse(trimmed) as Record<string, unknown>)['id'];
+      return typeof id === 'string' && id !== '' ? id : undefined;
+    } catch {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
+// Absolute POSIX paths inside tool commands. Conservative on purpose: only
+// well-known roots, so prose and log noise cannot mint phantom repos. Mirrors
+// project-slug's own ABSOLUTE_PATH so a path mentioned here resolves there.
+const OPENCODE_ABS_PATH = /\/(?:Users|home|opt|srv|var|private)\/[^\s'"`,;:)\]}]+/g;
+
+/**
+ * Pure mapping from raw opencode rows to a `SessionPayload`.
+ *
+ * Separated from `parse` so the mapping — where every field's provenance lives
+ * — is unit-testable against fixtures rather than a live sqlite3 CLI. `parse`
+ * is only I/O: it reads the two tables and hands the rows here.
+ */
+export function buildOpencodePayload(
+  session: {
+    id: string;
+    directory?: string;
+    title?: string;
+    model?: unknown;
+    mtimeMs: number;
+  },
+  messages: Record<string, unknown>[],
+  parts: Record<string, unknown>[],
+): SessionPayload | null {
+  const roleByMessage = new Map<string, string>();
+  let firstAssistantModelId: string | undefined;
+  let firstUserModelId: string | undefined;
+  let earliestMs: number | null = null;
+
+  for (const row of messages) {
+    const mid = typeof row['id'] === 'string' ? row['id'] : '';
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(String(row['data'] ?? '{}')) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const role = typeof data['role'] === 'string' ? data['role'] : '';
+    if (mid !== '') roleByMessage.set(mid, role);
+    const ts = opencodeMs(row['time_created']);
+    if (ts !== null && (earliestMs === null || ts < earliestMs)) earliestMs = ts;
+
+    // Model provenance, in priority order: the first assistant message's own
+    // `modelID`, then the session's `model`, then a user message's nested
+    // `model.modelID`. Messages are ordered by time_created, so "first" is the
+    // earliest row of that role.
+    if (role === 'assistant' && firstAssistantModelId === undefined) {
+      const modelID = typeof data['modelID'] === 'string' ? data['modelID'] : '';
+      if (modelID !== '') firstAssistantModelId = modelID;
+    } else if (role === 'user' && firstUserModelId === undefined) {
+      const nested = data['model'];
+      if (nested !== null && typeof nested === 'object') {
+        const modelID = (nested as Record<string, unknown>)['modelID'];
+        if (typeof modelID === 'string' && modelID !== '') firstUserModelId = modelID;
+      }
+    }
+  }
+
+  const out: CapturedMessage[] = [];
+  const toolsUsed = new Set<string>();
+  const filesTouched = new Set<string>();
+  const mentionedPaths = new Set<string>();
+
+  for (const row of parts) {
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(String(row['data'] ?? '{}')) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const type = typeof data['type'] === 'string' ? data['type'] : '';
+    const mid = typeof row['message_id'] === 'string' ? row['message_id'] : '';
+    const ts = opencodeMs(row['time_created']);
+    if (ts !== null && (earliestMs === null || ts < earliestMs)) earliestMs = ts;
+
+    if (type === 'text') {
+      const role = roleByMessage.get(mid) ?? '';
+      if (!FORWARDED_ROLES.has(role)) continue;
+      const text = typeof data['text'] === 'string' ? data['text'] : '';
+      if (text.trim() === '') continue;
+      out.push({
+        role,
+        content: truncate(text),
+        timestamp: ts !== null ? new Date(ts).toISOString() : new Date(session.mtimeMs).toISOString(),
+      });
+      continue;
+    }
+
+    if (type === 'tool') {
+      const tool = typeof data['tool'] === 'string' ? data['tool'] : '';
+      if (tool !== '') toolsUsed.add(tool);
+      const state = data['state'];
+      if (state === null || typeof state !== 'object') continue;
+      const input = (state as Record<string, unknown>)['input'];
+      if (input === null || typeof input !== 'object') continue;
+      const inp = input as Record<string, unknown>;
+      const filePath = typeof inp['filePath'] === 'string' ? inp['filePath'] : '';
+      if (filePath !== '' && path.isAbsolute(filePath)) {
+        filesTouched.add(filePath);
+        mentionedPaths.add(filePath);
+      }
+      const command = typeof inp['command'] === 'string' ? inp['command'] : '';
+      if (command !== '') {
+        for (const match of command.matchAll(OPENCODE_ABS_PATH)) {
+          mentionedPaths.add(match[0]);
+        }
+      }
+      continue;
+    }
+
+    // reasoning / step-start / step-finish / file — never forwarded, never stored.
+  }
+
+  if (out.length === 0) return null;
+  const deduped = dedupeMessages(out);
+
+  const model =
+    firstAssistantModelId ?? opencodeSessionModelId(session.model) ?? firstUserModelId;
+
+  const metadata: Record<string, unknown> = {};
+  if (session.title !== undefined) metadata['title'] = session.title;
+  if (session.directory !== undefined) metadata['directory'] = session.directory;
+  if (model !== undefined) metadata['model'] = model;
+
+  const base = session.directory !== undefined ? path.basename(session.directory) : '';
+
+  return {
+    session_key: `opencode:${session.id}`,
+    source: 'opencode',
+    project_slug: base === '' ? undefined : base,
+    cwd: session.directory,
+    messages: deduped,
+    tools_used: toolsUsed.size > 0 ? [...toolsUsed] : undefined,
+    files_touched: filesTouched.size > 0 ? [...filesTouched] : undefined,
+    mentioned_paths: mentionedPaths.size > 0 ? [...mentionedPaths] : undefined,
+    message_count: deduped.length,
+    session_started_at: earliestMs !== null ? new Date(earliestMs).toISOString() : undefined,
+    session_ended_at: new Date(session.mtimeMs).toISOString(),
+    metadata,
+  };
+}
+
 export const opencodeAdapter = {
   id: 'opencode',
   source: 'opencode',
   detect: () => existsSync(OPENCODE_DB),
 
   discover(sinceMs: number) {
-    const sinceSec = Math.floor(sinceMs / 1000);
-    // time_* are epoch values; compare in both ms and s since the unit is not
-    // documented and an empty table gave nothing to measure against.
+    // time_* are epoch MILLISECONDS (~1.79e12). The first cut compared a
+    // millisecond `last_ms` against `Math.floor(sinceMs / 1000)` seconds, so
+    // the HAVING predicate never filtered and every session passed the window.
     return sqlite(
       OPENCODE_DB,
-      `SELECT s.id, s.directory, s.title, MAX(m.time_updated) AS last_ms
+      `SELECT s.id, s.directory, s.title, s.model, MAX(m.time_updated) AS last_ms
          FROM session s JOIN message m ON m.session_id = s.id
         GROUP BY s.id
-       HAVING COALESCE(last_ms,0) > ${sinceSec}`,
+       HAVING COALESCE(last_ms,0) > ${Math.floor(sinceMs)}`,
     ).map((row) => ({
       sessionId: row.id,
       directory: row.directory,
       title: row.title,
+      model: row.model,
       mtimeMs: Number(row.last_ms) > 1e12 ? Number(row.last_ms) : Number(row.last_ms) * 1000,
     }));
   },
 
   async parse(file: DiscoveredSession) {
-    const rows = sqlite(
+    const id = String(file['sessionId']);
+    const escaped = id.replace(/'/g, "''");
+
+    // The conversation is NOT in message.data — measured 0 of 2,401 rows carry
+    // content/text/parts; message.data is role/model/path/tokens bookkeeping.
+    // The words live in the sibling `part` table, keyed by message_id. Read the
+    // session's own message ids so the parts query is bounded by the session.
+    const messages = sqlite(
       OPENCODE_DB,
-      `SELECT data, time_created FROM message
-        WHERE session_id = '${String(file['sessionId']).replace(/'/g, "''")}'
+      `SELECT id, data, time_created FROM message
+        WHERE session_id = '${escaped}'
         ORDER BY time_created ASC`,
     );
 
-    const messages = [];
-    for (const row of rows) {
-      let data;
-      try {
-        data = JSON.parse(String(row.data));
-      } catch {
-        continue;
-      }
-      const role = typeof data.role === 'string' ? data.role : '';
-      if (!FORWARDED_ROLES.has(role)) continue;
-      const text = extractText(data.content ?? data.text ?? data.parts).trim();
-      if (text === '') continue;
-      messages.push({
-        role,
-        content: truncate(text),
-        timestamp: new Date(Number(row.time_created) > 1e12
-          ? Number(row.time_created)
-          : Number(row.time_created) * 1000).toISOString(),
-      });
-    }
-    if (messages.length === 0) return null;
+    const idList = messages
+      .map((m) => `'${String(m.id).replace(/'/g, "''")}'`)
+      .join(',');
+    const parts =
+      idList === ''
+        ? []
+        : sqlite(
+            OPENCODE_DB,
+            `SELECT message_id, data, time_created FROM part
+              WHERE message_id IN (${idList})
+              ORDER BY time_created ASC`,
+          );
 
-    return {
-      session_key: `opencode:${file['sessionId']}`,
-      source: 'opencode',
-      project_slug:
-        typeof file['directory'] === 'string' ? path.basename(file['directory']) : undefined,
-      cwd: typeof file['directory'] === 'string' ? file['directory'] : undefined,
+    return buildOpencodePayload(
+      {
+        id,
+        directory: typeof file['directory'] === 'string' ? file['directory'] : undefined,
+        title: typeof file['title'] === 'string' ? file['title'] : undefined,
+        model: file['model'],
+        mtimeMs: Number(file['mtimeMs']),
+      },
       messages,
-      message_count: messages.length,
-      session_ended_at: new Date(Number(file['mtimeMs'])).toISOString(),
-      metadata: { title: file['title'], directory: file['directory'] },
-    };
+      parts,
+    );
   },
 };
 

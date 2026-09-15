@@ -189,8 +189,16 @@ function deepestExistingDir(p: string): string | null {
 /**
  * Absolute POSIX paths mentioned in text. Trailing punctuation is stripped so a
  * path at the end of a sentence, in quotes, or in a shell command still parses.
+ *
+ * `/tmp` belongs in the root set because it is the temp directory on Linux and
+ * this resolver is exercised there. Its absence was invisible on macOS, where
+ * `os.tmpdir()` is under `/var/folders` and the `var` root already matched, and
+ * fatal on CI, where `os.tmpdir()` is `/tmp`, the fixtures below are built
+ * inside it, and all four `resolveProjectSlugFromContent` assertions failed
+ * with `undefined` against a resolver that could not see the paths it was
+ * handed.
  */
-const ABSOLUTE_PATH = /\/(?:Users|home|opt|srv|var|private)\/[^\s'"`,;:)\]}]+/g;
+const ABSOLUTE_PATH = /\/(?:Users|home|opt|srv|var|private|tmp)\/[^\s'"`,;:)\]}]+/g;
 
 /**
  * Resolve a project from paths a session MENTIONED, for sessions whose own cwd
