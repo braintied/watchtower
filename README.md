@@ -10,7 +10,7 @@ MiniMax, or a model you run on your own machine: if the tool writes
 a session, Watchtower can store it.
 
 This repository is the Apache-2.0 **capture client**. Version
-**6.6.2**. It is source code you run on hardware you control.
+**6.7.0**. It is source code you run on hardware you control.
 
 ## Contents
 
