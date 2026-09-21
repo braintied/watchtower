@@ -67,7 +67,12 @@ services:
       - "5003:5003"
     environment:
       SUPABASE_URL: http://rest:3000
-      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlN625CKQyJDOmnIl2v2h_eH3eFu2yc}
+      # Local stub for the `rest` container only: role=service_role signed with the
+      # PGRST_JWT_SECRET above, which is Supabase's published default. It works
+      # against this compose stack and nowhere else. The previous default was not
+      # signed with that secret, so it never verified here and was removed as an
+      # unknown credential (2026-09-21). Set SUPABASE_SERVICE_KEY for anything real.
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE}  # git-secret-allow: signed with the published local default above; grants nothing outside this stack
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY}
       INNGEST_DEV: 1
