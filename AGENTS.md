@@ -53,7 +53,8 @@ The human may not know these names. Do not skip the sentence.
 | Webhook | `http://localhost:5003/webhooks/session`, an HTTP URL **their** server listens on | no |
 | [Postgres](https://www.postgresql.org/) | The database. Schema `watchtower`. Tables in `migrations/001_init.sql` | no (compose runs it) |
 | [PostgREST](https://docs.postgrest.org/en/latest/) | HTTP in front of those tables. Host `http://127.0.0.1:54321`, compose `http://rest:3000` | no |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | Env names from `@supabase/supabase-js`. Values are **their** PostgREST, or a [Supabase project they created](https://supabase.com/docs/guides/getting-started) | no, unless they choose hosted Supabase |
+| `WATCHTOWER_REST_URL` | A bare PostgREST: compose sets `http://rest:3000`, or **their** own | no |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | Names in the `@supabase/supabase-js` convention. `SUPABASE_URL` is a [Supabase project they created](https://supabase.com/docs/guides/getting-started) (the server writes to its `/rest/v1`); the key is whatever their PostgREST accepts | no, unless they choose hosted Supabase |
 | [Supabase](https://supabase.com/docs/guides/getting-started) | A hosted Postgres + PostgREST product. Optional. Compose does not use supabase.com | only if they pick that host |
 | [Inngest](https://www.inngest.com/docs) | Background jobs. Local UI on port 8288. Leftover analyzer only | no cloud account for localhost |
 | [Docker Compose](https://docs.docker.com/get-started/get-docker/) | One command that starts Postgres, PostgREST, local Inngest, and the server | Docker Desktop / Engine |
@@ -86,11 +87,11 @@ Verify: `test -f hooks/session-ingest.sh && test -f src/index.ts`
 
 ### 2. Write `.env.local` with their values
 
-Required for the leftover server: `SUPABASE_URL`,
-`SUPABASE_SERVICE_KEY`. `src/lib/db.ts` throws if either is missing.
-Use compose (`http://rest:3000` in the container,
-`http://127.0.0.1:54321` on the host) or a PostgREST / Supabase
-project **they** created.
+Under compose, skip this step: `docker-compose.yml` sets every value
+the stack needs. Outside compose the server needs a URL and a key:
+`WATCHTOWER_REST_URL` for a bare PostgREST, or `SUPABASE_URL` for a
+Supabase project **they** created, plus `SUPABASE_SERVICE_KEY`.
+`src/lib/db.ts` throws without them.
 
 Webhook defaults are localhost. Leave them. Never our Fly host.
 Leave `ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` empty unless they
@@ -133,7 +134,7 @@ and `test -x ~/.claude/hooks/session-ingest.sh`
 
 `src/webhook/session.ts` `source` is `CODING_SESSION_SOURCES`.
 A POST with `source=grok` (or `codex`, `cursor`, `opencode`,
-`gemini`) to `npm start` is valid. Adapters live in
+`gemini`) to the server is valid. Adapters live in
 `src/session-adapters.ts`. Disk paths:
 
 | Tool | Path |
@@ -148,7 +149,7 @@ A POST with `source=grok` (or `codex`, `cursor`, `opencode`,
 Stop a real session in any captured tool, then:
 
 ```bash
-psql -h localhost -p 54322 -U postgres -d postgres \
+docker compose exec db psql -U postgres \
   -c "SELECT count(*) FROM watchtower.coding_sessions;"
 ```
 
@@ -175,7 +176,7 @@ They do not need Fly if localhost is enough.
 | `src/types.ts` | `CODING_SESSION_SOURCES`, `SessionPayload`, localhost default URL |
 | `src/index.ts` | leftover Hono server on `:5003` |
 | `src/webhook/session.ts` | `source` is `CODING_SESSION_SOURCES` |
-| `src/lib/db.ts` | throws without `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` |
+| `src/lib/db.ts` | throws without a REST URL (`WATCHTOWER_REST_URL` or `SUPABASE_URL`) and `SUPABASE_SERVICE_KEY` |
 | `hooks/lib/session-key.sh` | `source:<uuid>`, process walk, no event whitelist |
 | `hooks/lib/session-key.test.sh` | must-fire / must-not-fire for the walker |
 | `hooks/lib/project-slug.sh` | shell half of the resolver, cache, `cwd_is_repo` |

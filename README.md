@@ -1,554 +1,304 @@
 # Watchtower
 
-Watchtower records what your coding agents tried, which of those
+**Watchtower records what your coding agents tried, which of those
 attempts failed, and the error that came back, so the next session
-does not repeat the same approach.
+does not repeat the same approach.**
 
-It does not call a model. It does not care which model wrote the
-turns. Claude, Grok, GPT, Gemini, a Cursor-hosted model, Kimi,
-MiniMax, or a model you run on your own machine: if the tool writes
-a session, Watchtower can store it.
+Every agent session ends the same way: the context window closes and
+the work disappears with it. Tomorrow's session, or a different agent
+in a different tool, retries yesterday's dead end. Watchtower catches
+each session as it stops and writes it to a Postgres database you own,
+one row per session, across every tool your team uses.
 
-This repository is the Apache-2.0 **capture client**. Version
-**7.3.0**. It is source code you run on hardware you control.
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+![Version](https://img.shields.io/badge/version-7.3.0-informational)
+![Model agnostic](https://img.shields.io/badge/models-any-brightgreen)
+
+| | |
+|---|---|
+| **Captures** | Claude Code, Cursor, Codex, Grok CLI, OpenCode, Gemini CLI, and anything that can POST JSON |
+| **Stores** | One row per session in `watchtower.coding_sessions`, in **your** Postgres |
+| **Calls a model?** | No. Capture does not call a model and does not care which model wrote the turns |
+| **Runs on** | Your laptop (`docker compose up`) or any host you control |
+| **Strips** | 17 kinds of secret (API keys, tokens, JWTs, DSNs) before a row is written |
+| **License** | Apache-2.0. Version 7.3.0 |
+
+```mermaid
+flowchart LR
+  A["Coding agent<br/>Claude Code · Cursor · Codex<br/>Grok · OpenCode · Gemini"] -->|Stop hook| H["hooks/session-ingest.sh"]
+  A -->|session files on disk| D["src/session-adapters.ts"]
+  H -->|POST /webhooks/session| S["Watchtower server :5003<br/>(your machine)"]
+  D -->|POST /webhooks/session| S
+  S -->|redact secrets, insert| P[("Your Postgres<br/>watchtower.coding_sessions")]
+```
 
 ## Contents
 
-- [What this repository is](#what-this-repository-is)
-- [What you get](#what-you-get)
-- [Names](#names)
+- [Quickstart: one row in five minutes](#quickstart-one-row-in-five-minutes)
+- [Wire your agents](#wire-your-agents)
+- [Handing this to an AI agent](#handing-this-to-an-ai-agent)
 - [This is code. It is not our machines.](#this-is-code-it-is-not-our-machines)
-- [The capture loop](#the-capture-loop)
-- [Postgres](#postgres)
-- [PostgREST](#postgrest)
-- [The SUPABASE_ names](#the-supabase_-names)
-- [Inngest](#inngest)
-- [Docker Compose](#docker-compose)
-- [Fly.io, Render, and a VM](#flyio-render-and-a-vm)
-- [Models](#models)
-- [If you want Braintied to stand one up](#if-you-want-braintied-to-stand-one-up)
-- [What must already be installed](#what-must-already-be-installed)
-- [Clone](#clone)
-- [Env](#env)
-- [Database and server](#database-and-server)
-- [Claude Code hooks](#claude-code-hooks)
-- [Other tools on disk](#other-tools-on-disk)
-- [Prove a session landed](#prove-a-session-landed)
-- [A public URL](#a-public-url)
-- [What gets captured](#what-gets-captured)
-- [Session keys](#session-keys)
-- [Which project](#which-project)
-- [Webhook](#webhook)
-- [Environment](#environment)
-- [Files](#files)
+- [The pieces, in plain words](#the-pieces-in-plain-words)
+- [Running beyond localhost](#running-beyond-localhost)
+- [Reference](#reference)
+- [Troubleshooting](#troubleshooting)
+- [What Braintied runs on top of this](#what-braintied-runs-on-top-of-this)
 
-## What this repository is
+## Quickstart: one row in five minutes
 
-A snapshot of how sessions leave a coding agent and land in a
-database **you** run. Hooks fire when some tools stop. Disk adapters
-read the session files other tools already write. A small server
-accepts the POST. Postgres keeps the row.
+You need [Docker](https://docs.docker.com/get-started/get-docker/),
+[Git](https://git-scm.com/downloads), and `curl`. Nothing else, and no
+account anywhere.
 
-Braintied built this for our own agents. The public tree is the
-capture half. The rest of what we run (live session floor, operator
-board, recall, journeys, error fingerprints, the hosted indexer) is
-not here. You can build those on top of the rows this client writes,
-or [ask us to](#if-you-want-braintied-to-stand-one-up).
-
-## What you get
-
-| You get | You do not get |
-|---------|----------------|
-| This code, Apache-2.0 | A login, an API key, or a seat on Braintied machines |
-| Hooks that fire when [Claude Code](https://code.claude.com/docs/en/hooks) stops | Braintied's Fly app (`ora-watchtower.fly.dev`) |
-| Adapters that read Grok, Codex, Cursor, and OpenCode off disk | Braintied's hosted Postgres |
-| A local server on port 5003 | Floor, board, manage, recall, journeys |
-| `migrations/001_init.sql` for **your** Postgres | Our keys, our cost ledger, our session store |
-| Releases and `@braintied/watchtower-capture` | `@braintied/watchtower` (private fleet package) |
-
-[braintied.com/watchtower](https://www.braintied.com/watchtower) is a
-public feed of **our** sessions. It is not an inbox for yours.
-
-## Names
-
-| Name | What it is |
-|------|------------|
-| Watchtower | The product, and this code |
-| [braintied/watchtower](https://github.com/braintied/watchtower) | This public repository |
-| `@braintied/watchtower-capture` | This repo on [GitHub Packages](https://github.com/orgs/braintied/packages/npm/package/watchtower-capture) |
-| `@braintied/watchtower` | Braintied's private fleet package. Installing it does not give you our indexer |
-| `ora-watchtower.fly.dev` | Our hosted indexer. The hook [refuses it](#this-is-code-it-is-not-our-machines) |
-| [Releases](https://github.com/braintied/watchtower/releases) | Tagged snapshots of this tree |
-
-## This is code. It is not our machines.
-
-Default webhook is `http://localhost:5003/webhooks/session`. That is
-a process on the machine that ran `npm start` or `docker compose up`.
-
-If `WATCHTOWER_SESSION_WEBHOOK_URL` is set to
-`ora-watchtower.fly.dev` or `ora-watchtower.internal`,
-`hooks/lib/refuse-hosted.sh` skips the POST. The hook still exits 0
-so the agent is not blocked. Your transcript does not reach us.
-
-`SUPABASE_URL` / `SUPABASE_SERVICE_KEY` must be a database **you**
-created, or the local compose stack. Those names are explained
-[below](#the-supabase_-names). Do not paste a Braintied credential.
-The compose JWT is a local stub.
-
-```
-your agent  -->  hook or disk adapter on your machine  -->  YOUR server :5003  -->  YOUR Postgres
-```
-
-Nothing in that line is Braintied infrastructure.
-
-## The capture loop
-
-A coding agent is a program that reads your repo, calls tools, and
-writes code. Claude Code, Cursor, Codex, the Grok CLI, OpenCode,
-Gemini CLI, and others all do that job. Watchtower does not run the
-agent. It remembers what the agent already did.
-
-Two ways a session gets in:
-
-1. **A hook.** Some tools (Claude Code is the one this tree ships
-   wired) can run a shell script when a session stops. That script
-   is `hooks/session-ingest.sh`. It POSTs the transcript to your
-   server.
-2. **A disk adapter.** Other tools already write session files
-   (`~/.codex/sessions`, `~/.grok/sessions`, `~/.cursor/projects`,
-   `~/.local/share/opencode/opencode.db`). `src/session-adapters.ts`
-   knows those layouts. You POST what `parse` returns.
-
-A **webhook** is just an HTTP URL your server listens on. The hook
-is a client. Your process on port 5003 is the server. The path is
-`/webhooks/session`.
-
-[Hono](https://hono.dev/) is the small Node HTTP framework that
-leftover server uses (`src/index.ts`). You do not need to learn
-Hono to run it.
-
-## Postgres
-
-[PostgreSQL](https://www.postgresql.org/) is the database. Rows live
-in a schema named `watchtower`. The tables this snapshot creates
-are in `migrations/001_init.sql`: `coding_sessions` and
-`session_chunks`.
-
-You talk to it with `psql` when you want to prove a row landed.
-[Download](https://www.postgresql.org/download/) if you do not have
-it. Compose already runs Postgres for you; `psql` is only the
-client.
-
-[pgvector](https://github.com/pgvector/pgvector) is a Postgres
-extension that stores embedding vectors. The leftover analyzer uses
-it if you turn embeddings on. Capture of the raw session does not
-need it. Compose uses an image that already includes it.
-
-## PostgREST
-
-The leftover Node server does not open a raw SQL socket. It speaks
-HTTP to [PostgREST](https://docs.postgrest.org/en/latest/), which
-turns the `watchtower` tables into a REST API.
-
-Compose publishes that API at `http://127.0.0.1:54321` on your
-machine. Inside the compose network the same process is
-`http://rest:3000`. Those two URLs are the same PostgREST. Use the
-first from your laptop, the second from the `watchtower` container.
-
-## The SUPABASE_ names
-
-[Supabase](https://supabase.com/docs/guides/getting-started) is a
-hosted product that bundles Postgres, PostgREST, and auth. The
-leftover server uses the official `@supabase/supabase-js` client, so
-the environment variables are named `SUPABASE_URL` and
-`SUPABASE_SERVICE_KEY`. Those names belong to the client library.
-They are not a requirement to open a supabase.com account.
-
-They can point at any of:
-
-1. Local compose PostgREST (`http://127.0.0.1:54321` on the host,
-   `http://rest:3000` in the container). No Supabase account.
-2. A [Supabase project you created](https://supabase.com/docs/guides/getting-started).
-3. Any PostgREST you run in front of your own Postgres 15.
-
-`src/lib/db.ts` throws if either variable is missing or empty. The
-value must be **yours**. A Braintied project URL is the wrong value.
-
-The compose JWT in `docker-compose.yml` is a local stub for option
-1. It is not a production key.
-
-## Inngest
-
-[Inngest](https://www.inngest.com/docs) is a background-job runner.
-When a session POST lands, the leftover server can hand "analyze
-this later" to Inngest so the webhook can return in milliseconds
-instead of waiting on a model.
-
-Compose starts a **local** Inngest on port 8288. You do not need an
-Inngest cloud account to run on your laptop. Open
-`http://127.0.0.1:8288` if you want to see queued jobs.
-
-Capture still writes the `coding_sessions` row if you never open
-that UI. Leave `ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` empty and
-the leftover analyzer has nothing to call. The row is still there.
-
-The leftover server mounts Inngest at `/api/inngest`. That is how
-the local Inngest process finds the functions. You do not configure
-that by hand under compose.
-
-## Docker Compose
-
-[Docker](https://docs.docker.com/get-started/get-docker/) runs
-small isolated machines (containers) on your laptop.
-`docker-compose.yml` is the file that starts four of them with one
-command: Postgres, PostgREST, local Inngest, and the Watchtower
-server.
-
-```bash
-docker compose up --build
-```
-
-You do not have to use Docker. You can install Postgres yourself,
-apply `migrations/001_init.sql`, point `SUPABASE_URL` at a
-PostgREST in front of it, and run `npm start`. Compose is the path
-that does not require you to wire those pieces by hand.
-
-## Fly.io, Render, and a VM
-
-Localhost is enough until a second machine needs to POST to you.
-Then the webhook URL has to be reachable from that machine.
-
-[Fly.io](https://fly.io/docs/launch/deploy/) and
-[Render](https://render.com/docs/deploys) are companies that rent
-you a small always-on computer with a public HTTPS URL. A VM you
-already have (a Linux box, a home server) does the same job if you
-put Node 20 and Postgres on it.
-
-You create **your** app. You set
-`WATCHTOWER_SESSION_WEBHOOK_URL` to **your** URL. You do not need
-Fly to try Watchtower. You must not name a Fly app
-`ora-watchtower` and you must not deploy against that name. That
-app is ours. The hook refuses `ora-watchtower.fly.dev`.
-
-## Models
-
-Capture does not call a model and does not select one.
-
-| Tool | How Watchtower sees it | Needs a model API key? |
-|------|------------------------|------------------------|
-| Claude Code | Stop / SessionStart hook | No |
-| Cursor | `~/.cursor/projects/` | No |
-| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | No |
-| Grok CLI | `~/.grok/sessions/` | No |
-| OpenCode | `~/.local/share/opencode/opencode.db` | No |
-| Gemini CLI | `source=gemini` on the webhook | No |
-| Anything that POSTs a `SessionPayload` | `src/types.ts` | No |
-
-The leftover server ships an optional analyzer
-(`src/inngest/session-analyzer.ts`) that, if you turn it on,
-currently calls Anthropic and Voyage. That is a leftover from an
-older self-host path, not a product requirement. Leave
-`ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` empty. Capture still
-works. Swap that leftover if you want a different provider.
-
-Do not pin this snapshot to a model version. The agent that wrote
-the turns is the agent's problem. Watchtower's job is the row.
-
-## If you want Braintied to stand one up
-
-We will stand up Watchtower for a company: your host, your
-database, your agents. That is
-[consulting](https://www.braintied.com/consulting) or an embed. You
-still do not land on our Fly app or our database.
-
-[hello@braintied.com](mailto:hello@braintied.com). Say you want
-Watchtower hosted for your team.
-
-## What must already be installed
-
-| Tool | Why | Get it |
-|------|-----|--------|
-| Node 20+ | `npm start`, `npm install`, hook installer | [nodejs.org/en/download](https://nodejs.org/en/download) |
-| npm | This snapshot is an npm repo | ships with Node |
-| Git | clone | [git-scm.com/downloads](https://git-scm.com/downloads) |
-| `jq` | Stop hook reads the tool's JSON. Without it the body is dropped | [jqlang.github.io/jq/download](https://jqlang.github.io/jq/download/) |
-| `curl` | Stop hook POSTs the session | usually preinstalled |
-| Docker (optional) | local Postgres + PostgREST + the server | [docs.docker.com/get-started/get-docker](https://docs.docker.com/get-started/get-docker/) |
-| [Claude Code](https://code.claude.com/docs/en/overview) (optional) | easiest hook path | [code.claude.com](https://code.claude.com/docs/en/overview) |
-| `psql` (optional) | prove a row landed | [postgresql.org/download](https://www.postgresql.org/download/) |
-
-Disk adapters do not need Claude Code installed.
-
-## Clone
+**1. Start the stack.** Postgres, PostgREST, a local job runner, and the
+Watchtower server come up together on your machine.
 
 ```bash
 git clone https://github.com/braintied/watchtower.git
 cd watchtower
-npm install
+docker compose up --build -d
 ```
 
-Or the package (same capture code, no leftover server):
-
-```bash
-npm install @braintied/watchtower-capture --registry=https://npm.pkg.github.com
-```
-
-GitHub Packages needs a token that can `read:packages`.
-[Working with the npm registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry).
-
-`@braintied/watchtower` (no `-capture`) is Braintied's private fleet
-package. Installing it does not give you our indexer.
-
-## Env
-
-There is no `.env` in the repo. Copy this to `.env.local` and fill
-**your** values. Empty Braintied URLs stay empty.
-
-```bash
-# Leftover server (src/lib/db.ts throws if these two are missing).
-# Names come from @supabase/supabase-js. Values are YOUR PostgREST
-# (compose) or a project you created. Not a Braintied URL.
-SUPABASE_URL=http://127.0.0.1:54321
-SUPABASE_SERVICE_KEY=replace-with-a-key-you-created
-
-# Optional leftover analyzer only. Capture does not read these.
-ANTHROPIC_API_KEY=
-VOYAGE_API_KEY=
-
-# Hooks. Localhost is the default. Do not set ora-watchtower.fly.dev.
-WATCHTOWER_SESSION_WEBHOOK_URL=http://localhost:5003/webhooks/session
-WATCHTOWER_SESSION_START_URL=http://localhost:5003/webhooks/session-start
-
-PORT=5003
-```
-
-For compose, `SUPABASE_URL=http://rest:3000` inside the app
-container (see `docker-compose.yml`). On the host, PostgREST is
-`http://127.0.0.1:54321`.
-
-## Database and server
-
-Local compose (your laptop, not our cloud):
-
-```bash
-docker compose up --build
-```
-
-| Port | What | Whose |
-|------|------|--------|
-| 54322 | Postgres 15 + pgvector | yours, volume `watchtower-db` |
-| 54321 | PostgREST | yours |
-| 8288 | local Inngest UI | yours |
-| 5003 | Watchtower HTTP server | yours |
-
-Migrations: `migrations/` is mounted into Postgres
-`docker-entrypoint-initdb.d`. A first boot applies
-`001_init.sql`. If the volume already exists empty of tables:
-
-```bash
-npx supabase db push --db-url "$WATCHTOWER_DATABASE_URL"
-```
-
-`WATCHTOWER_DATABASE_URL` is **your** URL. For compose, copy the
-`postgres` service from `docker-compose.yml` (localhost port 54322).
-The `supabase` CLI here is only a migration runner. It is not an
-account.
-
-Without Docker:
-
-```bash
-# provision your own Postgres 15 (pgvector optional)
-# apply migrations/001_init.sql
-# run PostgREST against that database
-# export SUPABASE_URL and SUPABASE_SERVICE_KEY
-npm start
-```
-
-Verify the process you started, not ours:
+**2. Check the server answers.**
 
 ```bash
 curl -sS http://localhost:5003/health
-# expect: {"status":"ok","service":"watchtower"}
+# {"status":"ok","service":"watchtower"}
 ```
 
-A connection refused means `npm start` / compose is not running.
-A response from `ora-watchtower.fly.dev` means you pointed at us.
-Stop. Set the env back to localhost or to a host you control.
-
-## Claude Code hooks
-
-[Claude Code hook events](https://code.claude.com/docs/en/hooks)
-are the Stop and SessionStart triggers. This is the easiest prove
-path because the tool fires the script for you. It is not the only
-path, and it does not lock Watchtower to Anthropic's model.
+**3. Send it a session.** This is the same POST a hook or adapter makes.
 
 ```bash
-npm run install-hooks
-# or: npx tsx scripts/install-hooks.ts --dry-run
-# or: npx tsx scripts/install-hooks.ts --url http://localhost:5003/webhooks/session
+curl -sS -X POST http://localhost:5003/webhooks/session \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "session_key": "claude:quickstart-0001",
+    "source": "claude_code",
+    "project_slug": "my-repo",
+    "messages": [
+      {"role": "user", "content": "Fix the flaky login test", "timestamp": "2026-01-01T10:00:00Z"},
+      {"role": "assistant", "content": "Retrying with a longer timeout failed: TimeoutError at auth.spec.ts:42", "timestamp": "2026-01-01T10:04:00Z"}
+    ]
+  }'
+# {"status":"ok","session_id":"<uuid>"}
 ```
 
-That script:
+**4. See the row in your database.**
+
+```bash
+docker compose exec db psql -U postgres -c \
+  "SELECT session_key, source, message_count, duration_minutes, created_at
+     FROM watchtower.coding_sessions ORDER BY created_at DESC LIMIT 5;"
+```
+
+A row with `claude:quickstart-0001`, 2 messages and 4 minutes means
+capture works. Now [wire a real agent](#wire-your-agents) so rows
+arrive without you.
+
+Stop the stack with `docker compose down`. Your data survives in the
+`watchtower-db` volume; `docker compose down -v` deletes it.
+
+## Wire your agents
+
+Two ways a session gets in. Use whichever the tool supports.
+
+| Tool | How Watchtower sees it | Needs a model API key? |
+|------|------------------------|------------------------|
+| Claude Code | Stop hook (`hooks/session-ingest.sh`) | No |
+| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | No |
+| Cursor | `~/.cursor/projects/` | No |
+| Grok CLI | `~/.grok/sessions/` | No |
+| OpenCode | `~/.local/share/opencode/opencode.db` | No |
+| Gemini CLI | POST with `"source": "gemini"` | No |
+| Anything else | POST a `SessionPayload` (`src/types.ts`) | No |
+
+### A hook: Claude Code
+
+[Claude Code hooks](https://code.claude.com/docs/en/hooks) run a shell
+script when a session stops. The installer copies the Watchtower hooks
+into place and registers them. It needs Node 20+ and
+[`jq`](https://jqlang.github.io/jq/download/); without `jq` the hook
+cannot read the transcript and posts an empty session.
+
+```bash
+npm install
+npm run install-hooks                 # add --dry-run to preview
+source ~/.zshrc                       # or ~/.bashrc
+```
+
+The installer:
 
 1. Copies `hooks/session-ingest.sh` and `hooks/session-track.sh` to
    `~/.claude/hooks/` (mode 0755).
 2. Registers Stop and SessionStart in `~/.claude/settings.json`.
-3. Appends the two `WATCHTOWER_*` URLs to `~/.zshrc`, `~/.bashrc`,
-   or `~/.profile` if those names are not already set.
+3. Appends `WATCHTOWER_SESSION_WEBHOOK_URL` and
+   `WATCHTOWER_SESSION_START_URL` to `~/.zshrc`, `~/.bashrc`, or
+   `~/.profile` if they are not already set.
 
-Then:
+Pass `--url https://your-host/webhooks/session` to point at a server
+that is not on localhost. `npm run uninstall-hooks` reverses all three
+steps.
 
-```bash
-source ~/.zshrc    # or ~/.bashrc
-npm run uninstall-hooks   # to reverse
+The hook never blocks your agent. It POSTs in the background with a
+5-second connect timeout, prints `{"continue": true}`, and exits 0
+whether or not the server answered.
+
+The Grok CLI also runs every hook in `~/.claude/settings.json` unless
+`[compat.claude] hooks = false` is set in `~/.grok/config.toml`.
+`hooks/grok/session-event.json` is a PostToolUse fragment for that
+case only. Installed beside settings.json, it runs `session-event.sh`
+twice per tool call.
+
+### A disk adapter: Codex, Cursor, Grok, OpenCode
+
+These tools already write every session to disk.
+`src/session-adapters.ts` knows each layout and exposes three
+functions:
+
+| Function | What it does |
+|----------|--------------|
+| `detect()` | Is this tool installed here? |
+| `discover()` | List session files. `stat` only, never reads content |
+| `parse(file)` | Return a `SessionPayload` ready to POST |
+
+Codex rollouts can run to several gigabytes, so `parse` streams them
+rather than reading the whole file. Walk `discover()`, `parse` each
+file, and POST the result to `/webhooks/session`.
+
+A new tool is a new adapter plus a value on `CODING_SESSION_SOURCES`
+in `src/types.ts`. Pull requests welcome.
+
+## Handing this to an AI agent
+
+[AGENTS.md](./AGENTS.md) is a step-by-step skill an agent can follow
+to stand Watchtower up for you, including the terms it must explain
+and the checks that mean done. Paste this into any coding agent:
+
+```text
+Read AGENTS.md in https://github.com/braintied/watchtower and set up
+Watchtower capture on this machine. Use docker compose. Done is a new
+row in watchtower.coding_sessions after I stop a session. Never point
+any URL at ora-watchtower.fly.dev.
 ```
 
-`--url` must be **your** webhook. If you pass
-`https://ora-watchtower.fly.dev/webhooks/session`, the hook will
-load, then refuse every POST.
+The contract an agent should hold itself to:
 
-Some other CLIs also read `~/.claude/settings.json`. The Grok CLI
-runs every hook in it unless `[compat.claude] hooks = false` is set in
-`~/.grok/config.toml`. `hooks/grok/session-event.json` is a PostToolUse
-fragment for that case only. Installed beside settings.json, it runs
-`session-event.sh` twice per tool call. The same refuse rule applies.
+- **Done** is a row in `watchtower.coding_sessions`, not a clean
+  clone or a green `/health`.
+- Every URL and credential belongs to the person being set up.
+- Capture needs no model key. Leave `ANTHROPIC_API_KEY` and
+  `VOYAGE_API_KEY` empty unless they ask for the optional analyzer.
+- `hooks/lib/refuse-hosted.sh` is a guard, not an obstacle. Never add
+  a bypass.
 
-## Other tools on disk
+## This is code. It is not our machines.
 
-1. `curl -sS http://localhost:5003/health` still returns ok.
-2. Open Claude Code in any repo, send one message, stop the session.
-3. Query **your** Postgres:
+Watchtower is software you run. Cloning it does not connect you to
+Braintied, and nothing you capture reaches us.
 
-```bash
-psql postgresql://postgres@localhost:54322/postgres \
-  -c "SELECT session_key, source, project_slug, message_count, created_at
-      FROM watchtower.coding_sessions
-      ORDER BY created_at DESC LIMIT 5;"
+```
+your agent  -->  hook or adapter on your machine  -->  YOUR server :5003  -->  YOUR Postgres
 ```
 
-A new row with `source_hook` / your `session_key` means capture
-works. Zero rows: check `jq` is installed, the hook is in
-`~/.claude/settings.json`, and the webhook URL is localhost (or
-your host), not ours.
+- The default webhook is `http://localhost:5003/webhooks/session`, the
+  process you started.
+- If `WATCHTOWER_SESSION_WEBHOOK_URL` names Braintied's own indexer
+  (`ora-watchtower.fly.dev` or `ora-watchtower.internal`),
+  `hooks/lib/refuse-hosted.sh` skips the POST and prints why. Your
+  transcript does not leave your machine by mistake.
+- `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` must name a database you
+  created, or the local compose stack. The key in
+  `docker-compose.yml` is a local stub that works against that stack
+  and nowhere else.
+- Before insert, the server strips 17 kinds of secret from the
+  session: Anthropic, OpenAI, AWS, GitHub, Stripe, Supabase, Voyage,
+  Fly, and Sentry credentials, bearer tokens, JWTs, and long hex
+  secrets (`src/lib/redact.ts`).
+- Only `user` and `assistant` turns are forwarded. Reasoning traces
+  and tool output are dropped; tool names are kept.
 
-### 6. Grok, Codex, Cursor, OpenCode
+[braintied.com/watchtower](https://www.braintied.com/watchtower) is a
+public feed of Braintied's own sessions. It is not an inbox for yours.
 
-The leftover webhook accepts every id in `CODING_SESSION_SOURCES`
-(`claude_code`, `cursor`, `codex`, `gemini`, `opencode`, `grok`,
-`kulti_meet`).
+## The pieces, in plain words
 
-| Tool | On disk |
-|------|---------|
-| Codex | `~/.codex/sessions/**/rollout-*.jsonl` |
-| Cursor | `~/.cursor/projects/` |
-| OpenCode | `~/.local/share/opencode/opencode.db` |
-| Grok CLI | `~/.grok/sessions/` |
+No account is needed for any of these on localhost. Compose runs them
+all.
 
-`src/session-adapters.ts` is `detect` / `discover` / `parse`.
-`discover` is stat only. Codex `parse` streams: some rollouts are
-multi-gigabyte and `readFileSync` will drop them.
+| Piece | What it does here |
+|-------|-------------------|
+| [PostgreSQL](https://www.postgresql.org/) | The database. Rows live in schema `watchtower`, created by `migrations/001_init.sql` |
+| [pgvector](https://github.com/pgvector/pgvector) | Postgres extension for embedding vectors. Only the optional analyzer uses it. The compose image includes it |
+| [PostgREST](https://docs.postgrest.org/en/latest/) | Turns the `watchtower` tables into an HTTP API, which is how the server writes rows. `http://127.0.0.1:54321` from your laptop, `http://rest:3000` inside compose |
+| `WATCHTOWER_REST_URL` | A bare PostgREST, such as the compose one or your own in front of Postgres 15. No supabase.com account required |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Names that follow the `@supabase/supabase-js` convention. `SUPABASE_URL` is a [Supabase project you created](https://supabase.com/docs/guides/getting-started); the server writes to its `/rest/v1`. The key is whatever your PostgREST accepts, under either URL |
+| [Inngest](https://www.inngest.com/docs) | A background-job runner. The server hands "analyze this later" to it so the webhook returns in milliseconds. Compose runs it locally; its UI is `http://127.0.0.1:8288` |
+| [Hono](https://hono.dev/) | The small Node HTTP framework in `src/index.ts`. You do not need to know it |
+| [Docker Compose](https://docs.docker.com/compose/) | Starts all of the above with one command |
 
-To POST those files, call `POST /webhooks/session` with a
-`SessionPayload` from `src/types.ts`, or walk the adapters yourself.
+### Without Docker
 
-A new vendor is a new adapter plus a value on
-`CODING_SESSION_SOURCES`. Open a pull request on this repository.
-
-## Prove a session landed
-
-1. `curl -sS http://localhost:5003/health` still returns ok.
-2. Stop a real session in any captured tool. Claude Code Stop is
-   the least wiring.
-3. Query **your** Postgres:
+Install Postgres 15, apply `migrations/001_init.sql`, run PostgREST
+against it, then:
 
 ```bash
-psql -h localhost -p 54322 -U postgres -d postgres \
-  -c "SELECT session_key, source, project_slug, message_count, created_at
-      FROM watchtower.coding_sessions
-      ORDER BY created_at DESC LIMIT 5;"
+export WATCHTOWER_REST_URL=http://127.0.0.1:3000   # your PostgREST
+export SUPABASE_SERVICE_KEY=<a JWT your PostgREST accepts>
+npm install
+npm run build && npm start                          # or: npm run dev
 ```
 
-Compose credentials live in `docker-compose.yml`. Do not commit a
-password into this tree.
+For a Supabase project, set `SUPABASE_URL` to the project URL
+instead of `WATCHTOWER_REST_URL`. The server refuses to start without
+one of the two URLs and the key (`src/lib/db.ts`). The PostgREST role
+your key names needs write access to the `watchtower` tables;
+`docker/initdb/000_local_roles.sql` shows the grants compose uses.
 
-A new row with your `session_key` means capture works. Zero rows is
-a failed setup, not a quiet system. Check `jq` is installed, the
-hook is registered or the adapter POST happened, and the webhook
-URL is localhost (or your host), not ours.
+### The optional analyzer
 
-## A public URL
+`src/inngest/session-analyzer.ts` can summarise and embed each session.
+It currently calls Anthropic and Voyage, and stays idle while
+`ANTHROPIC_API_KEY` and `VOYAGE_API_KEY` are empty. Capture never
+depends on it. Swap the provider if you want a different model.
 
-When localhost is not enough, deploy **your** copy to
+## Running beyond localhost
+
+Localhost is enough until a second machine needs to send sessions.
+Then the webhook needs a URL that machine can reach.
+
 [Fly.io](https://fly.io/docs/launch/deploy/),
-[Render](https://render.com/docs/deploys), or a VM that can run
-Node 20 and reach your Postgres.
+[Render](https://render.com/docs/deploys), or any VM that runs Node 20
+and reaches your Postgres will do. The `Dockerfile` builds the server
+as-is. Set `WATCHTOWER_REST_URL` (or `SUPABASE_URL`) and
+`SUPABASE_SERVICE_KEY` for your database,
+deploy, and point each machine's hook at it:
 
-Set `WATCHTOWER_SESSION_WEBHOOK_URL` to that URL. Never to
-`ora-watchtower.fly.dev`. Do not name your Fly app
-`ora-watchtower`.
-
-The leftover server needs `SUPABASE_URL` and
-`SUPABASE_SERVICE_KEY` for a database you provision. `src/lib/db.ts`
-throws if they are missing.
-
-## What gets captured
-
-Which tool ran the work must not decide whether the work is
-remembered. Hooks cover the tools that fire them. Disk adapters
-cover the rest.
-
-Only `user` and `assistant` turns are forwarded
-(`FORWARDED_ROLES`). Reasoning traces and tool output are dropped.
-Tool names are kept. A message is capped at 20,000 characters
-(`MAX_MESSAGE_CHARS` in `src/session-adapters.ts`). Codex rollouts
-must be streamed.
-
-## Session keys
-
-`hooks/lib/session-key.sh` writes `source:<uuid>`:
-
-```
-claude:99918550-4efe-4c62-91aa-…
-grok:01a0104f-e804-7a41-bbb7-a4c823c07d03
-codex:0f3a…
+```bash
+npm run install-hooks -- --url https://watchtower.your-company.dev/webhooks/session
 ```
 
-Detection walks the parent process, every event, no whitelist.
-Recognised: `claude`, `codex`, `cursor` / `cursor-agent`,
-`opencode`, `grok`, `kimi`, `zai`, `minimax`. `GROK_AGENT` /
-`GROK_HOME` short-circuit to `grok`. If nothing matches it writes
-`claude`, because Claude Code is the host that loads
-`~/.claude/settings.json` for other vendors too.
+Name your app anything except `ora-watchtower`. That name is
+Braintied's, and the hook refuses its host.
 
-The `source` column is `claude_code` when the vendor is Claude
-Code, and the vendor id otherwise.
+## Reference
 
-`hooks/session-track.sh` still builds an older key
-`encoded-cwd/session-id`. The Stop hook uses `source:uuid`. Treat
-`session-key.sh` as the contract. Do not copy the tracker.
+### Webhook payload
 
-## Which project
+`POST /webhooks/session`, validated by Zod in `src/webhook/session.ts`.
+Only `session_key` is required.
 
-`hooks/lib/project-slug.sh` is the one writer. It prefers a
-`watchtower resolve-project` CLI when that binary is on PATH, then
-the shell ladder. TypeScript source: `src/project-slug.ts`.
+| Field | Type | Notes |
+|-------|------|-------|
+| `session_key` | string | Unique per session. A repeat POST with the same key updates the row, so the latest Stop wins. See [session keys](#session-keys) |
+| `source` | enum | One of `CODING_SESSION_SOURCES`: `claude_code`, `cursor`, `codex`, `gemini`, `opencode`, `grok`, `kulti_meet`. Default `claude_code` |
+| `project_slug` | string | Which repo. See [which project](#which-project) |
+| `messages[]` | `{role, content, timestamp, tool_name?}` | When present, `message_count`, `tools_used`, and `duration_minutes` are derived from it |
+| `message_count`, `duration_minutes` | number | Override the derived values |
+| `files_touched`, `tools_used` | string[] | |
+| `session_started_at`, `session_ended_at` | ISO 8601 | |
+| `metadata` | object | Free-form. `metadata.raw_content` holds the transcript, capped at 50,000 characters |
 
-1. `origin` remote basename.
-2. `--git-common-dir` parent, so a linked worktree resolves to the
-   main checkout rather than to a worktree folder name.
-3. `basename(cwd)`, only when the directory is not a repo.
-
-`GIT_DIR`, `GIT_WORK_TREE`, `GIT_CEILING_DIRECTORIES`, and the rest
-of the list in `src/project-slug.ts` are scrubbed first. Slugs
-cache under `~/.cache/watchtower/project-slug/` for
-`WATCHTOWER_SLUG_TTL_MIN` minutes (default 1440).
-`resolve_cwd_is_repo` is not cached.
-
-`cwd_is_repo` omitted means unknown. Never default it to `false`.
-
-## Webhook
-
-The OSS Stop hook POSTs:
+The Claude Code Stop hook sends the short form:
 
 ```json
 {
@@ -563,61 +313,159 @@ The OSS Stop hook POSTs:
 }
 ```
 
-`jq` is required. Transcript comes from
-`~/.claude/projects/<cwd-with-slashes-as-dashes>/<session-id>/subagents/*.jsonl`,
-capped at 50,000 characters. Curl is fire-and-forget
-(`--connect-timeout 5 --max-time 30`). The hook always prints
-`{"continue": true}` and exits 0.
+It reads the transcript from
+`~/.claude/projects/<cwd-with-slashes-as-dashes>/<session-id>/subagents/*.jsonl`.
 
-The typed payload (`SessionPayload` in `src/types.ts`) also has
-`cwd`, `cwd_is_repo`, `messages[]`, `tools_used`, timestamps.
-
-Server routes (`src/index.ts`):
+### Server routes
 
 | Method | Path | What |
 |--------|------|------|
-| GET | `/health` | `{ status: "ok", service: "watchtower" }` |
-| POST | `/webhooks/session` | ingest |
-| POST | `/webhooks/session-start` | start tracker |
-| GET/POST/PUT | `/api/inngest` | leftover Inngest sync |
+| GET | `/health` | `{"status":"ok","service":"watchtower"}` |
+| POST | `/webhooks/session` | Ingest one session. Returns `{"status":"ok","session_id":"<uuid>"}` |
+| POST | `/webhooks/session-start` | Session start tracker |
+| GET/POST/PUT | `/api/inngest` | Where the local Inngest finds the analyzer functions |
 
-## Environment
+### Tables
 
-| Variable | Default | Required |
-|----------|---------|----------|
-| `SUPABASE_URL` | none | yes, for `npm start`. Your PostgREST, not ours |
-| `SUPABASE_SERVICE_KEY` | none | yes, for `npm start`. Yours |
-| `WATCHTOWER_SESSION_WEBHOOK_URL` | `http://localhost:5003/webhooks/session` | no |
-| `WATCHTOWER_SESSION_START_URL` | `http://localhost:5003/webhooks/session-start` | no |
-| `WATCHTOWER_SOURCE_COLUMN` | from `session-key.sh` | no |
-| `WATCHTOWER_SLUG_CACHE_DIR` | `~/.cache/watchtower/project-slug` | no |
-| `WATCHTOWER_SLUG_TTL_MIN` | `1440` | no |
-| `PORT` | `5003` | no |
-| `ANTHROPIC_API_KEY` | none | leftover analyzer only |
-| `VOYAGE_API_KEY` | none | leftover embeddings only |
+`migrations/001_init.sql` creates two tables in schema `watchtower`:
 
-## Files
+| Table | Holds |
+|-------|-------|
+| `coding_sessions` | One row per session: `session_key` (unique), `source`, `message_count`, `duration_minutes`, `files_touched`, `tools_used`, `metadata`, timestamps, and analyzer columns (`title`, `ai_summary`, `embedding`) |
+| `session_chunks` | Embedded transcript slices, written only by the optional analyzer |
+
+### Session keys
+
+`hooks/lib/session-key.sh` writes `source:<uuid>`:
+
+```
+claude:99918550-4efe-4c62-91aa-…
+grok:01a0104f-e804-7a41-bbb7-a4c823c07d03
+codex:0f3a…
+```
+
+It finds the tool by walking the parent process on every event.
+Recognised: `claude`, `codex`, `cursor` / `cursor-agent`, `opencode`,
+`grok`, `kimi`, `zai`, `minimax`. `GROK_AGENT` / `GROK_HOME`
+short-circuit to `grok`. With no match it writes `claude`, because
+Claude Code is the host that loads `~/.claude/settings.json` for other
+tools too. The `source` column is `claude_code` for Claude Code and the
+tool id otherwise.
+
+`hooks/session-track.sh` still builds an older
+`encoded-cwd/session-id` key. `session-key.sh` is the contract.
+
+### Which project
+
+`hooks/lib/project-slug.sh` (TypeScript: `src/project-slug.ts`)
+resolves the repo name in three rungs:
+
+1. The basename of the `origin` remote.
+2. The parent of `--git-common-dir`, so a linked worktree resolves to
+   its main checkout, not the worktree folder.
+3. `basename(cwd)`, only when the directory is not a repo.
+
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_CEILING_DIRECTORIES`, and the rest of
+the list in `src/project-slug.ts` are scrubbed first. Results cache in
+`~/.cache/watchtower/project-slug/` for `WATCHTOWER_SLUG_TTL_MIN`
+minutes. If a `watchtower resolve-project` binary is on `PATH`, the
+script asks it first. An omitted `cwd_is_repo` means unknown; never
+default it to `false`.
+
+### Environment
+
+There is no `.env` in the repo. Compose sets everything the stack
+needs. Outside compose, put these in `.env.local`:
+
+| Variable | Default | Needed for |
+|----------|---------|------------|
+| `WATCHTOWER_REST_URL` | none | The server, with a bare PostgREST. Wins over `SUPABASE_URL` |
+| `SUPABASE_URL` | none | The server, with a Supabase project (writes to `/rest/v1`) |
+| `SUPABASE_SERVICE_KEY` | none | The server. A key your PostgREST accepts |
+| `WATCHTOWER_SESSION_WEBHOOK_URL` | `http://localhost:5003/webhooks/session` | Hooks |
+| `WATCHTOWER_SESSION_START_URL` | `http://localhost:5003/webhooks/session-start` | Hooks |
+| `WATCHTOWER_SOURCE_COLUMN` | from `session-key.sh` | Hooks, to force a `source` |
+| `WATCHTOWER_SLUG_CACHE_DIR` | `~/.cache/watchtower/project-slug` | Project resolver |
+| `WATCHTOWER_SLUG_TTL_MIN` | `1440` | Project resolver |
+| `PORT` | `5003` | The server |
+| `ANTHROPIC_API_KEY` | empty | Optional analyzer only |
+| `VOYAGE_API_KEY` | empty | Optional analyzer embeddings only |
+
+### Ports under compose
+
+| Port | Service |
+|------|---------|
+| 5003 | Watchtower server |
+| 54321 | PostgREST |
+| 54322 | Postgres 15 + pgvector (volume `watchtower-db`) |
+| 8288 | Local Inngest UI |
+
+### Files
 
 | Path | What it is |
 |------|------------|
+| `src/index.ts` | Hono server on `:5003` |
+| `src/webhook/session.ts` | Ingest: validate, derive, redact, upsert by `session_key` |
 | `src/session-adapters.ts` | `detect` / `discover` / `parse` for Codex, Cursor, OpenCode, Grok |
-| `src/project-slug.ts` | three-rung resolver + `GIT_*` scrub |
-| `src/types.ts` | `CODING_SESSION_SOURCES`, `SessionPayload`, localhost default URL |
-| `src/index.ts` | leftover Hono server on `:5003` |
-| `src/webhook/session.ts` | ingest; `source` is `CODING_SESSION_SOURCES` |
-| `src/lib/db.ts` | throws without `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` |
-| `hooks/session-ingest.sh` | Stop hook, webhook only |
-| `hooks/session-track.sh` | SessionStart. Still `encoded-cwd/session-id` |
-| `hooks/lib/session-key.sh` | `source:<uuid>`, process walk, no event whitelist |
-| `hooks/lib/project-slug.sh` | shell half of the resolver |
-| `hooks/lib/refuse-hosted.sh` | refuse `ora-watchtower.fly.dev` / `.internal` |
+| `src/project-slug.ts` | Three-rung project resolver and `GIT_*` scrub |
+| `src/types.ts` | `CODING_SESSION_SOURCES`, `SessionPayload`, default URL |
+| `src/lib/redact.ts` | Secret stripping before insert |
+| `src/lib/db.ts` | PostgREST client; refuses to start without a URL and key |
+| `src/inngest/` | Optional analyzer and scanner |
+| `hooks/session-ingest.sh` | Claude Code Stop hook |
+| `hooks/session-track.sh` | Claude Code SessionStart hook |
+| `hooks/lib/session-key.sh` | `source:<uuid>` from the process tree |
+| `hooks/lib/project-slug.sh` | Shell half of the project resolver |
+| `hooks/lib/refuse-hosted.sh` | Refuses Braintied's hosted indexer |
 | `hooks/grok/session-event.json` | Grok CLI PostToolUse fragment |
-| `scripts/install-hooks.ts` | copies ingest + track, patches `settings.json` |
-| `migrations/001_init.sql` | `coding_sessions` + `session_chunks` |
-| `docker-compose.yml` | local Postgres / PostgREST / Inngest |
+| `scripts/install-hooks.ts` | Installs hooks and patches `settings.json` |
+| `migrations/001_init.sql` | Schema, tables, and search function |
+| `docker/initdb/000_local_roles.sql` | PostgREST roles and grants for the compose database only |
+| `docker-compose.yml` | Local Postgres, PostgREST, Inngest, server |
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| `curl: (7) Failed to connect` on `/health` | The server is not running. `docker compose ps`, then `docker compose logs watchtower` |
+| Stopped a Claude Code session, no new row | Check `jq` is installed, the Stop hook is in `~/.claude/settings.json`, and `echo $WATCHTOWER_SESSION_WEBHOOK_URL` is your server |
+| `watchtower: refusing to POST to Braintied production` | Your webhook URL names Braintied's indexer. Point it at your own server |
+| `{"error":"Validation failed"}` | The payload broke the schema. `issues` in the response names the field; `source` must be a value in `CODING_SESSION_SOURCES` |
+| `{"error":"Failed to store session"}` | Read `detail`. A permission error means the PostgREST role lacks grants on `watchtower` tables |
+| Tables missing after `compose up` | The volume existed before the migration ran. `docker compose down -v`, then up again (this deletes stored rows) |
+| Server exits at start with a credentials error | No REST URL or no `SUPABASE_SERVICE_KEY`. Compose sets both; outside compose, export them |
+
+## What Braintied runs on top of this
+
+[Braintied](https://www.braintied.com) built Watchtower for its own
+agents. This repository is the capture half, published under
+Apache-2.0. The rest of what we run on these rows (a live floor of
+every running session, an operator board of what needs a human,
+recall across past sessions, error fingerprints, a hosted indexer)
+stays private. You can build those on the rows this client writes.
+
+| Name | What it is |
+|------|------------|
+| [braintied/watchtower](https://github.com/braintied/watchtower) | This repository |
+| `@braintied/watchtower-capture` | This code on [GitHub Packages](https://github.com/orgs/braintied/packages/npm/package/watchtower-capture) |
+| `@braintied/watchtower` | Braintied's private fleet package. Installing it does not give you our indexer |
+| `ora-watchtower.fly.dev` | Braintied's hosted indexer. The hook refuses it |
+| [Releases](https://github.com/braintied/watchtower/releases) | Tagged snapshots of this tree |
+
+To install the capture code as a package (no server):
+
+```bash
+npm install @braintied/watchtower-capture --registry=https://npm.pkg.github.com
+```
+
+GitHub Packages needs a token with `read:packages`
+([how](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)).
+
+Want Watchtower stood up for your team, on your host and your
+database? That is [consulting](https://www.braintied.com/consulting).
+Email [hello@braintied.com](mailto:hello@braintied.com).
 
 ## License
 
-Apache-2.0. Agents building this for a customer:
-[AGENTS.md](./AGENTS.md). Humans sending a patch:
-[CONTRIBUTING.md](./CONTRIBUTING.md).
+Apache-2.0. Agents setting this up: [AGENTS.md](./AGENTS.md). Humans
+sending a patch: [CONTRIBUTING.md](./CONTRIBUTING.md).
