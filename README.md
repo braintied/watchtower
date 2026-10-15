@@ -10,7 +10,7 @@ MiniMax, or a model you run on your own machine: if the tool writes
 a session, Watchtower can store it.
 
 This repository is the Apache-2.0 **capture client**. Version
-**7.0.0**. It is source code you run on hardware you control.
+**7.3.0**. It is source code you run on hardware you control.
 
 ## Contents
 
@@ -407,9 +407,11 @@ npm run uninstall-hooks   # to reverse
 `https://ora-watchtower.fly.dev/webhooks/session`, the hook will
 load, then refuse every POST.
 
-Some other CLIs also read `~/.claude/settings.json`.
-`hooks/grok/session-event.json` is a PostToolUse fragment for the
-Grok CLI. The same refuse rule applies.
+Some other CLIs also read `~/.claude/settings.json`. The Grok CLI
+runs every hook in it unless `[compat.claude] hooks = false` is set in
+`~/.grok/config.toml`. `hooks/grok/session-event.json` is a PostToolUse
+fragment for that case only. Installed beside settings.json, it runs
+`session-event.sh` twice per tool call. The same refuse rule applies.
 
 ## Other tools on disk
 
