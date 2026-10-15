@@ -189,9 +189,12 @@ export async function handleSessionWebhook(c: Context): Promise<Response> {
     }
   }
 
-  // Insert into coding_sessions
+  // Upsert by session_key. Claude Code fires Stop at the end of every
+  // turn, and SessionStart may have written the row first, so a plain
+  // insert rejected every Stop after the first as a duplicate key and
+  // the stored transcript froze at turn one. The latest Stop wins.
   const { data: insertedRow, error: insertError } = await queryWatchtower('coding_sessions')
-    .insert(insertPayload)
+    .upsert(insertPayload, { onConflict: 'session_key' })
     .select('id')
     .single();
 
@@ -208,14 +211,23 @@ export async function handleSessionWebhook(c: Context): Promise<Response> {
     return c.json({ error: 'Insert returned no data' }, 500);
   }
 
-  // Emit event for downstream processing
-  await inngest.send({
-    name: 'watchtower/coding-session.received',
-    data: {
-      session_id: insertedData.id,
-      project_slug: projectSlug,
-    },
-  });
+  // Queue the optional analyzer. The row is already stored, so a job
+  // runner that is down must not turn a captured session into a 500
+  // the hook would read as lost.
+  try {
+    await inngest.send({
+      name: 'watchtower/coding-session.received',
+      data: {
+        session_id: insertedData.id,
+        project_slug: projectSlug,
+      },
+    });
+  } catch (err) {
+    logger.warn(
+      { sessionId: insertedData.id, error: err instanceof Error ? err.message : String(err) },
+      '[Watchtower/SessionWebhook] Stored, but could not queue the analyzer',
+    );
+  }
 
   logger.info(
     { sessionId: insertedData.id, projectSlug, source: body.source },

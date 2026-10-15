@@ -22,9 +22,12 @@
 version: '3.8'
 
 services:
-  # PostgreSQL with pgvector
+  # PostgreSQL 15 with pgvector. A plain image on purpose: the
+  # supabase/postgres image keeps its own role setup in
+  # docker-entrypoint-initdb.d, which mounting migrations/ replaced,
+  # so the `postgres` role never existed and PostgREST could not log in.
   db:
-    image: supabase/postgres:15.6.1.143
+    image: pgvector/pgvector:0.8.0-pg15
     ports:
       - "54322:5432"
     environment:
@@ -32,7 +35,8 @@ services:
       POSTGRES_DB: postgres
     volumes:
       - watchtower-db:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
+      - ./docker/initdb/000_local_roles.sql:/docker-entrypoint-initdb.d/000_local_roles.sql:ro
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -66,7 +70,8 @@ services:
     ports:
       - "5003:5003"
     environment:
-      SUPABASE_URL: http://rest:3000
+      # A bare PostgREST serves at /, not a Supabase project's /rest/v1.
+      WATCHTOWER_REST_URL: http://rest:3000
       # Local stub for the `rest` container only: role=service_role signed with the  # git-secret-allow: names the role of the published local stub below, no credential
       # PGRST_JWT_SECRET above, which is Supabase's published default. It works
       # against this compose stack and nowhere else. The previous default was not
@@ -75,7 +80,9 @@ services:
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE}  # git-secret-allow: signed with the published local default above; grants nothing outside this stack
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+      # The local job runner is the `inngest` container, not 127.0.0.1.
       INNGEST_DEV: 1
+      INNGEST_BASE_URL: http://inngest:8288
       PORT: 5003
     depends_on:
       db:
