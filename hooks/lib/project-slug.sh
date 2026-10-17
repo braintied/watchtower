@@ -63,20 +63,73 @@ resolve_project_slug() {
     return 0
   fi
 
-  _slug=""
-  if command -v watchtower > /dev/null 2>&1; then
-    # Non-zero exit means "no answer", which is distinct from an empty slug and
-    # must fall through rather than be cached as the truth.
-    _slug=$(watchtower resolve-project "$_dir" 2>/dev/null) || _slug=""
-  fi
-  if [ -z "$_slug" ]; then
-    _slug=$(_watchtower_slug_fallback "$_dir")
+  # Ask the filesystem BEFORE asking the CLI.
+  #
+  # The installed binary at ~/.local/lib/watchtower is whatever version was last
+  # deployed, and older ones answer `g` for $HOME with exit 0. A hook cannot
+  # know which version it is calling, so it must not depend on the callee being
+  # current: this guard makes the shell correct on every machine immediately,
+  # and the CLI's own cwdIsRepo gate is the second line for callers that reach
+  # it directly. Measured 2026-08-19 21:2x PT — with the CLI fix written but
+  # not yet built, `g` was still being written at 23 rows per 5 minutes; with
+  # this guard it stops without a binary deploy.
+  if [ "$(resolve_cwd_is_repo "$_dir")" != "true" ]; then
+    _watchtower_slug_cache_write "$_cache_file" ""
+    return 0
   fi
 
-  if [ -n "$_slug" ] && mkdir -p "$WATCHTOWER_SLUG_CACHE_DIR" 2>/dev/null; then
-    printf '%s' "$_slug" > "$_cache_file" 2>/dev/null || true
+  _slug=""
+  if command -v watchtower > /dev/null 2>&1; then
+    # Non-zero exit is an AUTHORITATIVE "this directory is not a project", not a
+    # hint to guess. Until 2026-08-19 the next line fell through to the basename
+    # ladder, so the resolver's honest refusal was overwritten by the name of
+    # whatever directory the session happened to start in.
+    #
+    # That is how `project_slug='g'` — basename of the home directory — became 112,867
+    # rows all time and 106,108 in the trailing 7 days: 52% of
+    # watchtower.session_messages, 651 sessions, against ZERO rows in
+    # watchtower.projects with that slug. `Development`, `.claude`, `tmp`,
+    # `brew` and `v8` are the same defect wearing other directory names.
+    #
+    # A NULL slug is recoverable: the content tier resolves it from the paths
+    # the session mentioned, and every later reader can see it is unknown. A row
+    # stamped `g` is not recoverable, because it looks resolved and nothing
+    # revisits it.
+    if _slug=$(watchtower resolve-project "$_dir" 2>/dev/null); then
+      : # answered; $_slug holds it
+    else
+      _slug=""
+    fi
+    _watchtower_slug_cache_write "$_cache_file" "$_slug"
+    printf '%s' "$_slug"
+    return 0
   fi
+
+  # CLI absent: degrade to the old shell ladder, but never past the same guard.
+  # A machine without the CLI installed should capture less, not capture wrong.
+  if [ "$(resolve_cwd_is_repo "$_dir")" = "true" ]; then
+    _slug=$(_watchtower_slug_fallback "$_dir")
+  else
+    _slug=""
+  fi
+
+  _watchtower_slug_cache_write "$_cache_file" "$_slug"
   printf '%s' "$_slug"
+}
+
+# Cache an authoritative answer, INCLUDING an empty one.
+#
+# An empty cache file is the cached "not a project", and `cat` of it returns
+# empty — which is exactly what the reader above wants. Writing only non-empty
+# answers (the pre-2026-08-19 behaviour) meant every non-repo directory re-ran
+# the resolver on every single message, which is also why the cheapest possible
+# answer was the one being recomputed most often.
+_watchtower_slug_cache_write() {
+  _cf="$1"
+  _val="$2"
+  mkdir -p "$WATCHTOWER_SLUG_CACHE_DIR" 2>/dev/null || return 0
+  printf '%s' "$_val" > "$_cf" 2>/dev/null || true
+  return 0
 }
 
 # resolve_cwd_is_repo <directory> -> prints `true` or `false`.
@@ -113,5 +166,62 @@ resolve_cwd_is_repo() {
   else
     printf 'false'
   fi
+  return 0
+}
+
+# resolve_git_branch <directory> -> prints the branch name, or nothing.
+#
+# The third git fact capture needs and the one no hook has ever sent: ZERO of
+# 2,658 coding_sessions in the 14 days to 2026-08-19 carried a branch, and
+# session_handoffs.branch was populated on 1 of 1,771 rows. Meanwhile every line
+# of the Claude transcript already carried `gitBranch` — 247,908 branch-bearing
+# lines in a 60-transcript sample — and nothing read it.
+#
+# DELIBERATELY NOT CACHED, unlike the slug. A slug is stable per directory; a
+# branch is not. One GuardNIL session moved across eight branches in the same
+# worktree, so a 24h memo would pin the first one and quietly mislabel every
+# later turn — worse than no branch at all, because a stale branch reads as a
+# measured fact. It is one rev-parse against a warm git dir.
+#
+# Prints nothing for a detached HEAD rather than the literal "HEAD": the
+# transcript's own gitBranch field degrades to "HEAD" for hand-made worktrees
+# (measured — ~/Development/.worktrees/brief-research reports HEAD while git
+# says feat/brief-research-injection), and "HEAD" as a stored branch name is
+# indistinguishable from a real answer. When detached, the caller should fall
+# back to the commit sha, which at least identifies the code.
+#
+# Same environment scrub as the rest of this file, for the same reason: an
+# inherited GIT_DIR makes `git -C` answer for the hook's repo, not the session's.
+resolve_git_branch() {
+  _dir="$1"
+  if [ -z "$_dir" ] || [ ! -d "$_dir" ]; then
+    return 0
+  fi
+  _branch=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+         -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX \
+         -u GIT_CEILING_DIRECTORIES \
+         git -C "$_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  [ "$_branch" = "HEAD" ] && _branch=""
+  printf '%s' "$_branch"
+  return 0
+}
+
+# resolve_repo_root <directory> -> prints the checkout root, or nothing.
+#
+# Distinguishes WHICH copy of a repo a turn ran in. The slug says `sentigen`;
+# this says whether that was the shared checkout or one of ~390 worktrees, which
+# is the difference between two agents colliding and two agents working safely
+# in parallel. `--show-toplevel` is the worktree's own root, which is the
+# question being asked here — NOT --git-common-dir, which would collapse every
+# worktree onto the main checkout and lose exactly the distinction.
+resolve_repo_root() {
+  _dir="$1"
+  if [ -z "$_dir" ] || [ ! -d "$_dir" ]; then
+    return 0
+  fi
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_PREFIX \
+      -u GIT_CEILING_DIRECTORIES \
+      git -C "$_dir" rev-parse --show-toplevel 2>/dev/null || true
   return 0
 }

@@ -29,7 +29,7 @@
  * wiring. That is the difference between a registry and a to-do list.
  */
 
-import { createReadStream, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { closeSync, createReadStream, openSync, readFileSync, readSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -145,6 +145,38 @@ function walkRollouts(dir: string, sinceMs: number, out: DiscoveredSession[] = [
   return out;
 }
 
+/**
+ * File headers of a Codex `apply_patch` body: Add / Update / Delete File, and
+ * the destination of a Move. Codex has no read or write tool of its own; every
+ * edit goes through apply_patch, so these are the files it touched.
+ *
+ * The patch reaches the rollout in three shapes, all seen on this machine:
+ * inside an `exec` custom_tool_call's JavaScript (`tools.apply_patch("*** Begin
+ * Patch\n*** Add File: /abs/path\n…")`, newlines as the two characters
+ * backslash-n: 689 of 7,078 exec calls across 40 rollouts on 2026-10-15), as an
+ * `apply_patch` custom tool's raw input with real newlines, or JSON-escaped
+ * inside function_call arguments. A path ends at either newline form or a
+ * closing quote.
+ */
+const CODEX_PATCH_FILE = /\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+?)(?=\\n|\n|\\"|"|$)/g;
+
+/** Absolute paths a Codex tool call's patch names. Relative ones resolve against the session cwd. */
+export function codexPatchFiles(body: string, cwd: string | null): string[] {
+  const files: string[] = [];
+  for (const match of body.matchAll(CODEX_PATCH_FILE)) {
+    const raw = match[1];
+    if (raw === undefined) continue;
+    const trimmed = raw.trim();
+    if (trimmed === '') continue;
+    if (path.isAbsolute(trimmed)) {
+      files.push(trimmed);
+    } else if (cwd !== null) {
+      files.push(path.resolve(cwd, trimmed));
+    }
+  }
+  return files;
+}
+
 export const codexAdapter = {
   id: 'codex',
   source: 'codex',
@@ -161,6 +193,9 @@ export const codexAdapter = {
   async parse(file: DiscoveredSession) {
     const messages = [];
     const toolsUsed = new Set<string>();
+    // Patch bodies are kept until session_meta has given the cwd that
+    // resolves their relative paths. Only the bodies that name a file.
+    const patchBodies: string[] = [];
     let meta = null;
     let firstTs = null;
     let lastTs = null;
@@ -214,6 +249,10 @@ export const codexAdapter = {
 
       if (payload.type === 'custom_tool_call' || payload.type === 'function_call') {
         if (typeof payload.name === 'string') toolsUsed.add(payload.name);
+        const body = typeof payload.input === 'string'
+          ? payload.input
+          : (typeof payload.arguments === 'string' ? payload.arguments : '');
+        if (body.includes('*** ')) patchBodies.push(body);
         continue;
       }
 
@@ -229,6 +268,10 @@ export const codexAdapter = {
 
     if (meta === null || messages.length === 0) return null;
     const deduped = dedupeMessages(messages);
+    const filesTouched = new Set<string>();
+    for (const body of patchBodies) {
+      for (const f of codexPatchFiles(body, meta.cwd)) filesTouched.add(f);
+    }
 
     return {
       session_key: `codex:${meta.id ?? path.basename(String(file['path']), '.jsonl')}`,
@@ -237,6 +280,8 @@ export const codexAdapter = {
       cwd: meta.cwd ?? undefined,
       messages: deduped,
       tools_used: toolsUsed.size > 0 ? [...toolsUsed] : undefined,
+      files_touched: filesTouched.size > 0 ? [...filesTouched] : undefined,
+      mentioned_paths: filesTouched.size > 0 ? [...filesTouched] : undefined,
       message_count: deduped.length,
       session_started_at: firstTs ?? undefined,
       session_ended_at: lastTs ?? undefined,
@@ -631,6 +676,145 @@ function grokUserText(entry: Record<string, unknown>): string {
   return raw;
 }
 
+/**
+ * Grok's file tools and the argument that names the file, read off 3,600
+ * sessions in ~/.grok/sessions on 2026-10-15. Mirrors what the Claude Stop
+ * hook counts as touched (Edit / Write / Read file_path): files read or
+ * written, not directories listed or searched.
+ */
+const GROK_FILE_ARGUMENT: Readonly<Record<string, string>> = {
+  read_file: 'target_file',
+  search_replace: 'file_path',
+  write: 'file_path',
+};
+
+export interface GrokToolPaths {
+  readonly files: string[];
+  readonly mentioned: string[];
+}
+
+/**
+ * Paths one Grok tool call touched or mentioned. `argumentsJson` is the
+ * `tool_calls[].arguments` string exactly as chat_history.jsonl stores it.
+ * Files under the session's own Grok directory (its terminal logs) are tool
+ * plumbing, not work, so they never count.
+ */
+export function grokToolPaths(name: string, argumentsJson: unknown, grokRoot: string): GrokToolPaths {
+  const files: string[] = [];
+  const mentioned: string[] = [];
+  if (typeof argumentsJson !== 'string') return { files, mentioned };
+  let args: unknown;
+  try {
+    args = JSON.parse(argumentsJson);
+  } catch {
+    return { files, mentioned };
+  }
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return { files, mentioned };
+  const fileKey = GROK_FILE_ARGUMENT[name];
+  if (fileKey !== undefined) {
+    const value: unknown = Reflect.get(args, fileKey);
+    if (typeof value === 'string' && path.isAbsolute(value) && !isUnder(value, grokRoot)) {
+      files.push(value);
+      mentioned.push(value);
+    }
+  }
+  const command: unknown = Reflect.get(args, 'command');
+  if (typeof command === 'string') {
+    for (const match of command.matchAll(OPENCODE_ABS_PATH)) {
+      if (!isUnder(match[0], grokRoot)) mentioned.push(match[0]);
+    }
+  }
+  return { files, mentioned };
+}
+
+function isUnder(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+export interface GrokSegmentStats {
+  /** "- Unique target files (N): a, b, c" — every path a compacted tool call targeted. */
+  readonly targets: string[];
+  /** "- Tools used: grep (7), read_file (5)" — tool names only. */
+  readonly tools: string[];
+}
+
+/**
+ * The statistics header of one `compaction/segment_NNN.md`.
+ *
+ * Grok compacts chat_history.jsonl in place. The turns it drops, and their
+ * tool calls, survive only in these segment records, so a session captured
+ * after compaction had no files at all: 0.0% files_touched for grok over the
+ * 14 days to 2026-10-15. grok:01a132cf-… alone had 30 segments.
+ */
+export function parseGrokSegmentStats(text: string): GrokSegmentStats {
+  const targets: string[] = [];
+  const tools: string[] = [];
+  for (const line of text.split('\n')) {
+    if (line.startsWith('## Summary')) break;
+    const target = line.match(/^- Unique target files \(\d+\): (.+)$/);
+    if (target !== null && target[1] !== undefined) {
+      for (const entry of target[1].split(', ')) {
+        const trimmed = entry.trim();
+        if (path.isAbsolute(trimmed)) targets.push(trimmed);
+      }
+      continue;
+    }
+    const used = line.match(/^- Tools used: (.+)$/);
+    if (used !== null && used[1] !== undefined) {
+      for (const entry of used[1].split(', ')) {
+        const name = entry.replace(/\s*\(\d+\)\s*$/, '').trim();
+        if (name !== '') tools.push(name);
+      }
+    }
+  }
+  return { targets, tools };
+}
+
+/**
+ * A segment's target list names directories too (list_dir, grep path). A path
+ * that is the parent of any other known path is a directory; drop it, along
+ * with Grok's own session plumbing. `known` is every target of every segment
+ * plus the files the live tool calls named: on grok:01a132cf-… a worktree's
+ * `docs/changelog` was listed in one segment and its files in another.
+ */
+export function grokSegmentFiles(
+  targets: readonly string[],
+  known: readonly string[],
+  grokRoot: string,
+): string[] {
+  const kept: string[] = [];
+  for (const candidate of targets) {
+    if (isUnder(candidate, grokRoot)) continue;
+    const parent = known.some((other) => other.startsWith(`${candidate}${path.sep}`));
+    if (parent) continue;
+    kept.push(candidate);
+  }
+  return kept;
+}
+
+/** True only for a path that exists now and is a directory. */
+function isDirectoryNow(candidate: string): boolean {
+  try {
+    return statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** The statistics header sits in the first few KB of a ~750 KB segment file. */
+const GROK_SEGMENT_HEAD_BYTES = 64 * 1024;
+
+function readHead(file: string, bytes: number): string {
+  const fd = openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(bytes);
+    const read = readSync(fd, buffer, 0, bytes, 0);
+    return buffer.subarray(0, read).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export const grokAdapter: SessionAdapter = {
   id: 'grok',
   source: 'grok',
@@ -674,6 +858,8 @@ export const grokAdapter: SessionAdapter = {
   async parse(file: DiscoveredSession) {
     const messages: CapturedMessage[] = [];
     const toolsUsed = new Set<string>();
+    const filesTouched = new Set<string>();
+    const mentionedPaths = new Set<string>();
     let firstTs: string | null = null;
     let lastTs: string | null = null;
 
@@ -738,12 +924,16 @@ export const grokAdapter: SessionAdapter = {
       // Skip system scaffolding, reasoning traces, and tool OUTPUT bulk.
       if (kind === 'system' || kind === 'reasoning' || kind === 'tool_result') continue;
 
-      // Tool names may also live on assistant turns.
+      // Tool names, and the files they touched, live on assistant turns.
       if (kind === 'assistant' && Array.isArray(entry.tool_calls)) {
         for (const tc of entry.tool_calls) {
-          if (tc !== null && typeof tc === 'object' && typeof (tc as { name?: unknown }).name === 'string') {
-            toolsUsed.add((tc as { name: string }).name);
-          }
+          if (tc === null || typeof tc !== 'object') continue;
+          const name: unknown = Reflect.get(tc, 'name');
+          if (typeof name !== 'string') continue;
+          toolsUsed.add(name);
+          const touched = grokToolPaths(name, Reflect.get(tc, 'arguments'), GROK_ROOT);
+          for (const f of touched.files) filesTouched.add(f);
+          for (const m of touched.mentioned) mentionedPaths.add(m);
         }
       }
 
@@ -773,6 +963,42 @@ export const grokAdapter: SessionAdapter = {
     if (messages.length === 0) return null;
     const deduped = dedupeMessages(messages);
 
+    // Turns compaction removed from chat_history.jsonl: their tool calls are
+    // recorded only in compaction/segment_NNN.md.
+    const compactionDir = path.join(String(file['sessionDir']), 'compaction');
+    const segmentTargets: string[] = [];
+    if (existsSync(compactionDir)) {
+      for (const name of readdirSync(compactionDir)) {
+        if (!/^segment_\d+\.md$/.test(name)) continue;
+        let head: string;
+        try {
+          head = readHead(path.join(compactionDir, name), GROK_SEGMENT_HEAD_BYTES);
+        } catch {
+          continue; // a segment being rewritten must not lose the session
+        }
+        const stats = parseGrokSegmentStats(head);
+        for (const tool of stats.tools) toolsUsed.add(tool);
+        segmentTargets.push(...stats.targets);
+      }
+    }
+    const known = [...segmentTargets, ...filesTouched];
+    for (const f of grokSegmentFiles(segmentTargets, known, GROK_ROOT)) {
+      // A directory that still exists is never a touched file, even when no
+      // other listed path sits under it.
+      if (isDirectoryNow(f)) continue;
+      filesTouched.add(f);
+      mentionedPaths.add(f);
+    }
+
+    // Grok's own count of chat turns survives compaction; the forwarded
+    // messages do not. grok:01a132cf-… on 2026-10-15: num_chat_messages 26
+    // (exactly its 12 user + 14 assistant stored rows), 2 forwardable turns
+    // left on disk, so the payload said 2.
+    const chatCount = summary !== null && typeof summary.num_chat_messages === 'number'
+      ? summary.num_chat_messages
+      : null;
+    const messageCount = chatCount !== null && chatCount > deduped.length ? chatCount : deduped.length;
+
     const info = summary !== null && typeof summary.info === 'object' && summary.info !== null
       ? (summary.info as Record<string, unknown>)
       : null;
@@ -792,7 +1018,9 @@ export const grokAdapter: SessionAdapter = {
       cwd: cwd !== '' ? cwd : undefined,
       messages: deduped,
       tools_used: toolsUsed.size > 0 ? [...toolsUsed] : undefined,
-      message_count: deduped.length,
+      files_touched: filesTouched.size > 0 ? [...filesTouched] : undefined,
+      mentioned_paths: mentionedPaths.size > 0 ? [...mentionedPaths] : undefined,
+      message_count: messageCount,
       session_started_at: firstTs ?? undefined,
       session_ended_at: lastTs ?? new Date(Number(file['mtimeMs'])).toISOString(),
       metadata: {
