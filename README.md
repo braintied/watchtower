@@ -11,7 +11,7 @@ each session as it stops and writes it to a Postgres database you own,
 one row per session, across every tool your team uses.
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-![Version](https://img.shields.io/badge/version-8.1.0-informational)
+![Version](https://img.shields.io/badge/version-8.2.0-informational)
 ![Model agnostic](https://img.shields.io/badge/models-any-brightgreen)
 
 | | |
@@ -21,7 +21,7 @@ one row per session, across every tool your team uses.
 | **Calls a model?** | No. Capture does not call a model and does not care which model wrote the turns |
 | **Runs on** | Your laptop (`docker compose up`) or any host you control |
 | **Strips** | 17 kinds of secret (API keys, tokens, JWTs, DSNs) before a row is written |
-| **License** | Apache-2.0. Version 8.1.0 |
+| **License** | Apache-2.0. Version 8.2.0 |
 
 ```mermaid
 flowchart LR
